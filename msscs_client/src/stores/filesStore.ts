@@ -96,7 +96,7 @@ export const useFilesStore = defineStore('files', () => {
   const loadFiles = async () => {
     loading.value = true
     try {
-      const fileList = await invoke<FileItem[]>('list_files')
+      const fileList = await tauri.invoke<FileItem[]>('list_files')
       files.value = fileList
     } catch (error) {
       console.error('Failed to load files:', error)
