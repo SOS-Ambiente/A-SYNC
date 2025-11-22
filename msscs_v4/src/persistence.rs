@@ -1,5 +1,5 @@
 // Persistence module
-use crate::block::DataBlock;
+use crate::block::{DataBlock, FileMetadata};
 use crate::error::{MSSCSError, Result};
 use std::collections::HashMap;
 use std::fs;
