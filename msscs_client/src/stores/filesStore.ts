@@ -32,6 +32,33 @@ export interface ProgressData {
 }
 
 // Enhanced progress interface for uploads
+export interface UploadProgress {
+  fileId: string;
+  progress: number; // 0-100
+  bytesUploaded: number;
+  totalBytes: number;
+  speed: number; // bytes per second
+  eta: number; // estimated time remaining in seconds
+  stage: 'uploading' | 'compressing' | 'encrypting' | 'replicating' | 'complete' | 'error';
+  error?: string;
+}
+
+// Enhanced progress interface for downloads
+export interface DownloadProgress {
+  fileId: string;
+  progress: number; // 0-100
+  bytesDownloaded: number;
+  totalBytes: number;
+  speed: number; // bytes per second
+  eta: number; // estimated time remaining in seconds
+  stage: 'downloading' | 'decompressing' | 'verifying' | 'complete' | 'error';
+  chunksFound: number;
+  totalChunks: number;
+  peersConnected: number;
+  error?: string;
+}
+
+// Enhanced progress interface for uploads
 interface UploadProgress {
   fileId: string;
   progress: number; // 0-100
