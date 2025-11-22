@@ -125,9 +125,9 @@ export const useFilesStore = defineStore('files', () => {
         }
       })
 
-      const result = await invoke<{ uuid: string; blocks: number }>('upload_file', { 
-        filePath, 
-        operationId 
+      const result = await tauri.invoke<{ uuid: string; blocks: number }>('upload_file', {
+        filePath,
+        operationId
       })
       
       await loadFiles()
