@@ -106,14 +106,36 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  const uploadFile = async (filePath: string) => {
+  const uploadFile = async (filePath: string, onProgress?: (progress: UploadProgress) => void) => {
     try {
-      const result = await invoke<{ uuid: string; blocks: number }>('upload_file', { filePath })
-      await loadFiles()
-      return result
+      const fileId = generateFileId();
+
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('upload-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as UploadProgress);
+          }
+        });
+      }
+
+      // Start upload with enhanced parameters
+      const result = await tauri.invoke('upload_file', {
+        fileId,
+        fileName: filePath.split('/').pop() || filePath,
+        fileSize: 0, // Will be read by backend
+        filePath: filePath,
+        chunkSize: 1024 * 1024, // 1MB chunks (matching backend)
+        compressionLevel: 'high', // Enable Huffman compression
+        replicationFactor: 3, // Replicate to 3 peers
+        encrypt: true // Enable encryption
+      });
+
+      await loadFiles();
+      return { fileId, ...result };
     } catch (error) {
-      uploadProgress.value.delete(filePath)
-      throw error
+      console.error('Upload failed:', error);
+      throw new Error(`Upload failed: ${error}`);
     }
   }
 
