@@ -55,14 +55,14 @@ impl NetworkDiscovery {
 
     async fn mdns_scan(&self) -> Result<Vec<DiscoveredNode>, Box<dyn std::error::Error>> {
         use mdns_sd::{ServiceDaemon, ServiceEvent};
-        
+
         let mdns = ServiceDaemon::new()?;
         let service_type = "_msscs._tcp.local.";
-        
+
         let receiver = mdns.browse(service_type)?;
-        
+
         let mut nodes = Vec::new();
-        let timeout = tokio::time::timeout(Duration::from_secs(3), async {
+        let timeout = tokio::time::timeout(Duration::from_secs(10), async { // Increased from 3 to 10 seconds
             while let Ok(event) = receiver.recv_async().await {
                 match event {
                     ServiceEvent::ServiceResolved(info) => {
@@ -71,17 +71,24 @@ impl NetworkDiscovery {
                                 name: info.get_fullname().to_string(),
                                 address: addr.to_string(),
                                 port: info.get_port(),
-                                node_id: info.get_fullname().to_string(),
+                                node_id: format!("{}:{}", addr, info.get_port()),
                             });
                         }
+                    }
+                    ServiceEvent::SearchStarted(_) => {
+                        info!("mDNS search started");
+                    }
+                    ServiceEvent::SearchStopped(_) => {
+                        info!("mDNS search stopped");
+                        break;
                     }
                     _ => {}
                 }
             }
         });
-        
+
         let _ = timeout.await;
-        
+
         Ok(nodes)
     }
 
