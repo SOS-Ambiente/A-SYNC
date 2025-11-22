@@ -158,8 +158,7 @@ export const useFilesStore = defineStore('files', () => {
       })
 
       // Listen for progress events
-      const { listen } = await import('@tauri-apps/api/event')
-      const unlisten = await listen<UploadProgress>('download-progress', (event) => {
+      const unlisten = await tauri.listen<UploadProgress>('download-progress', (event) => {
         if (event.payload.operationId === operationId) {
           uploadProgress.value.set(operationId, event.payload)
           
