@@ -139,13 +139,30 @@ export const useFilesStore = defineStore('files', () => {
     }
   }
 
-  const downloadFile = async (path: string, savePath: string) => {
+  const downloadFile = async (fileId: string, savePath: string, onProgress?: (progress: DownloadProgress) => void) => {
     try {
-      await invoke('download_file', { path, savePath })
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('download-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as DownloadProgress);
+          }
+        });
+      }
+
+      // Start download
+      const result = await tauri.invoke('download_file', {
+        fileId,
+        outputPath: savePath,
+        decompress: true, // Decompress using Huffman
+        verifyIntegrity: true, // Check checksums
+        preferLocal: true // Use local cache if available
+      });
+
+      return { fileId, ...result };
     } catch (error) {
-      console.error('Failed to download file:', error)
-      downloadProgress.value.delete(path)
-      throw error
+      console.error('Download failed:', error);
+      throw new Error(`Download failed: ${error}`);
     }
   }
 
