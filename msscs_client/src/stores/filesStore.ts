@@ -168,7 +168,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const previewFile = async (path: string): Promise<string | null> => {
     try {
-      const data = await invoke<string>('preview_file', { path })
+      const data = await tauri.invoke<string>('preview_file', { path })
       return data
     } catch (error) {
       console.error('Failed to preview file:', error)
@@ -178,7 +178,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const openWithNativeApp = async (path: string) => {
     try {
-      await invoke('open_with_native', { path })
+      await tauri.invoke('open_with_native', { path })
     } catch (error) {
       console.error('Failed to open file:', error)
       throw error
@@ -187,7 +187,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const deleteFile = async (path: string) => {
     try {
-      await invoke('delete_file', { path })
+      await tauri.invoke('delete_file', { path })
       await loadFiles()
     } catch (error) {
       console.error('Failed to delete file:', error)
