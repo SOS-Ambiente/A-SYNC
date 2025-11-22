@@ -140,7 +140,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const cancelOperation = async (operationId: string) => {
     try {
-      await invoke('cancel_operation', { operationId })
+      await tauri.invoke('cancel_operation', { operationId })
     } catch (error) {
       console.error('Failed to cancel operation:', error)
     }
