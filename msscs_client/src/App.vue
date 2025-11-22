@@ -101,7 +101,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { appWindow } from '@tauri-apps/api/window'
 import { useNodeStore } from './stores/nodeStore'
 import FilesView from './components/FilesView.vue'
@@ -154,7 +154,15 @@ const maximizeWindow = () => appWindow.toggleMaximize()
 const closeWindow = () => appWindow.close()
 
 // Initialize node on mount
-nodeStore.initialize()
+onMounted(async () => {
+  console.log('App mounted, initializing node...')
+  try {
+    await nodeStore.initialize()
+    console.log('Node initialization complete, status:', nodeStore.status)
+  } catch (error) {
+    console.error('Failed to initialize node:', error)
+  }
+})
 </script>
 
 <style scoped>

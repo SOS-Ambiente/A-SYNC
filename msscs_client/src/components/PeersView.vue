@@ -76,7 +76,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import { invoke } from '@tauri-apps/api/tauri'
 
 interface Peer {
   id: string
@@ -86,31 +87,47 @@ interface Peer {
   latency: number
 }
 
-const peers = ref<Peer[]>([
-  { id: '1', address: '192.168.1.100:8080', status: 'online', blocks: 1234, latency: 45 },
-  { id: '2', address: '192.168.1.101:8080', status: 'online', blocks: 987, latency: 52 },
-])
-
+const peers = ref<Peer[]>([])
+const loading = ref(false)
 const showAddPeer = ref(false)
 const newPeerAddress = ref('')
 
-const addPeer = () => {
+const loadPeers = async () => {
+  loading.value = true
+  try {
+    const peerList = await invoke<Peer[]>('list_peers')
+    peers.value = peerList
+  } catch (error) {
+    console.error('Failed to load peers:', error)
+  } finally {
+    loading.value = false
+  }
+}
+
+const addPeer = async () => {
   if (newPeerAddress.value) {
-    peers.value.push({
-      id: Date.now().toString(),
-      address: newPeerAddress.value,
-      status: 'online',
-      blocks: 0,
-      latency: 0,
-    })
-    newPeerAddress.value = ''
-    showAddPeer.value = false
+    try {
+      await invoke('add_peer', { address: newPeerAddress.value })
+      newPeerAddress.value = ''
+      showAddPeer.value = false
+      await loadPeers()
+    } catch (error) {
+      console.error('Failed to add peer:', error)
+      alert(`Failed to add peer: ${error}`)
+    }
   }
 }
 
 const removePeer = (peer: Peer) => {
+  // TODO: Implement remove peer command
   peers.value = peers.value.filter(p => p.id !== peer.id)
 }
+
+onMounted(() => {
+  loadPeers()
+  // Refresh every 10 seconds
+  setInterval(loadPeers, 10000)
+})
 </script>
 
 <style scoped>

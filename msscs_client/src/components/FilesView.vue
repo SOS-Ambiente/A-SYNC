@@ -114,16 +114,41 @@
       </div>
     </div>
 
-    <!-- Upload Progress -->
-    <div v-if="filesStore.uploadProgress.size > 0" class="upload-overlay">
+    <!-- Upload/Download Progress -->
+    <div v-if="filesStore.uploadProgress.size > 0 || filesStore.downloadProgress.size > 0" class="upload-overlay">
       <div class="upload-card">
-        <h3>Uploading Files</h3>
-        <div v-for="[path, progress] in filesStore.uploadProgress" :key="path" class="upload-item">
-          <div class="upload-name">{{ path }}</div>
-          <div class="upload-bar">
-            <div class="upload-fill" :style="{ width: progress + '%' }"></div>
+        <h3>File Operations</h3>
+        
+        <!-- Upload Progress -->
+        <div v-for="[path, data] in filesStore.uploadProgress" :key="'up-' + path" class="upload-item">
+          <div class="upload-header">
+            <span class="upload-icon">📤</span>
+            <span class="upload-name">{{ getFileName(path) }}</span>
           </div>
-          <div class="upload-percent">{{ progress }}%</div>
+          <div class="upload-bar">
+            <div class="upload-fill" :style="{ width: data.progress + '%' }"></div>
+          </div>
+          <div class="upload-info">
+            <span class="upload-percent">{{ data.progress }}%</span>
+            <span v-if="data.speed" class="upload-speed">{{ formatSpeed(data.speed) }}</span>
+            <span v-if="data.eta" class="upload-eta">{{ formatTime(data.eta) }}</span>
+          </div>
+        </div>
+        
+        <!-- Download Progress -->
+        <div v-for="[path, data] in filesStore.downloadProgress" :key="'down-' + path" class="upload-item">
+          <div class="upload-header">
+            <span class="upload-icon">📥</span>
+            <span class="upload-name">{{ getFileName(path) }}</span>
+          </div>
+          <div class="upload-bar">
+            <div class="upload-fill download" :style="{ width: data.progress + '%' }"></div>
+          </div>
+          <div class="upload-info">
+            <span class="upload-percent">{{ data.progress }}%</span>
+            <span v-if="data.speed" class="upload-speed">{{ formatSpeed(data.speed) }}</span>
+            <span v-if="data.eta" class="upload-eta">{{ formatTime(data.eta) }}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -191,6 +216,21 @@ const formatBytes = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+}
+
+const formatSpeed = (blocksPerSec: number): string => {
+  return `${blocksPerSec.toFixed(1)} blocks/s`
+}
+
+const formatTime = (seconds: number): string => {
+  if (seconds < 60) return `${Math.round(seconds)}s`
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.round(seconds % 60)
+  return `${mins}m ${secs}s`
+}
+
+const getFileName = (path: string): string => {
+  return path.split('/').pop() || path.split('\\').pop() || path
 }
 
 const getFileExtension = (path: string): string => {
@@ -692,14 +732,38 @@ watch(() => nodeStore.status, (newStatus) => {
   border-radius: var(--radius-md);
 }
 
+.upload-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.upload-icon {
+  font-size: 18px;
+}
+
 .upload-name {
   font-size: 14px;
   font-weight: 500;
   color: var(--color-text-secondary);
-  margin-bottom: var(--spacing-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+}
+
+.upload-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--spacing-sm);
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.upload-speed, .upload-eta {
+  color: var(--color-accent-primary);
 }
 
 .upload-bar {
@@ -717,6 +781,11 @@ watch(() => nodeStore.status, (newStatus) => {
   border-radius: var(--radius-full);
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: var(--glow-primary);
+}
+
+.upload-fill.download {
+  background: linear-gradient(90deg, #00ccff, #0099ff);
+  box-shadow: 0 0 12px rgba(0, 204, 255, 0.4);
 }
 
 .upload-percent {

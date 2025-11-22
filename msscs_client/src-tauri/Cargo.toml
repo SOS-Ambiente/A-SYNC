@@ -18,6 +18,8 @@ tokio = { version = "1", features = ["full"] }
 msscs_v4 = { path = "../../msscs_v4" }
 base64 = "0.22"
 dirs = "5.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

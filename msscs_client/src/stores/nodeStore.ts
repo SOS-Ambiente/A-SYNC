@@ -21,17 +21,39 @@ export const useNodeStore = defineStore('node', () => {
   const metrics = ref<NodeMetrics | null>(null)
 
   const initialize = async () => {
+    // Check if running in Tauri context
+    if (typeof window !== 'undefined' && !(window as any).__TAURI_IPC__) {
+      console.warn('Not running in Tauri context - node initialization skipped')
+      status.value = 'offline'
+      return
+    }
+
     try {
-      console.log('Initializing node...')
+      console.log('🚀 Initializing MSSCS node...')
+      
+      // Check if already running
+      const isRunning = await invoke<boolean>('is_node_running')
+      if (isRunning) {
+        console.log('✅ Node already running')
+        status.value = 'online'
+        startMetricsPolling()
+        return
+      }
+      
+      // Start the node
+      console.log('⏳ Starting node...')
       await invoke('start_node')
-      console.log('Node started successfully')
+      console.log('✅ Node started successfully!')
       status.value = 'online'
       startMetricsPolling()
     } catch (error) {
-      console.error('Failed to start node:', error)
+      console.error('❌ Failed to start node:', error)
       status.value = 'offline'
-      // Show error to user
-      alert(`Failed to start node: ${error}`)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.error('Detailed error:', errorMsg)
+      
+      // Show error in console but don't block UI with alert
+      console.error('⚠️  Node initialization failed. Some features may not work.')
     }
   }
 
@@ -43,8 +65,9 @@ export const useNodeStore = defineStore('node', () => {
       peerCount.value = data.peer_count
       blockCount.value = data.block_count
       
-      // Update status based on metrics
-      if (data.peer_count > 0) {
+      // Node is online if metrics are available (node is running)
+      // Status will show peer count separately
+      if (status.value !== 'online') {
         status.value = 'online'
       }
     } catch (error) {

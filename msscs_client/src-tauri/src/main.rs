@@ -7,6 +7,8 @@ use msscs_v4::{
     network::Node,
     persistence::PersistenceManager,
     vfs::VirtualFileSystem,
+    identity::QuantumIdentity,
+    p2p_network::{P2PNode, P2PConfig},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -18,6 +20,7 @@ use tokio::sync::RwLock;
 struct AppStateWrapper {
     vfs: Arc<RwLock<VirtualFileSystem>>,
     node: Arc<Node>,
+    p2p_node: Option<Arc<RwLock<P2PNode>>>,
     config: Arc<Config>,
     metrics: Arc<Metrics>,
 }
@@ -46,6 +49,15 @@ struct NodeMetrics {
     requests_total: u64,
     requests_failed: u64,
     success_rate: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PeerInfo {
+    id: String,
+    address: String,
+    status: String,
+    blocks: usize,
+    latency: u64,
 }
 
 // Tauri commands
@@ -101,7 +113,7 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     let mut vfs = VirtualFileSystem::new(config.clone(), persistence.clone())
         .map_err(|e| e.to_string())?;
 
-    // Initialize network node
+    // Initialize network node (legacy TCP)
     let node = Arc::new(Node::new(config.clone()));
     
     // Start DHT
@@ -117,6 +129,60 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
         }
     });
 
+    // Initialize advanced P2P node (libp2p) - always initialize for local network discovery
+    tracing::info!("Initializing P2P networking with libp2p...");
+    
+    let p2p_config = P2PConfig {
+        listen_addresses: vec![
+            "/ip4/0.0.0.0/tcp/0".to_string(),
+            "/ip6/::/tcp/0".to_string(),
+        ],
+        bootstrap_peers: Vec::new(), // Empty for now - will use mDNS for local discovery
+        max_peers: 50,
+        enable_mdns: true,  // Enable local network peer discovery
+        enable_relay: true,
+        replication_factor: config.replication_factor,
+    };
+    
+    let p2p_node = match P2PNode::new(p2p_config).await {
+        Ok(mut p2p_node) => {
+            let peer_id = p2p_node.peer_id();
+            tracing::info!("P2P Node initialized with Peer ID: {}", peer_id);
+            
+            // Take the event receiver
+            let mut event_rx = p2p_node.take_event_receiver();
+            
+            p2p_node.start().await.map_err(|e| e.to_string())?;
+            
+            let p2p_node = Arc::new(RwLock::new(p2p_node));
+            
+            // Spawn event handler if we got the receiver
+            if let Some(mut event_rx) = event_rx {
+                let p2p_clone = p2p_node.clone();
+                tokio::spawn(async move {
+                    while let Some(event) = event_rx.recv().await {
+                        use msscs_v4::p2p_network::P2PEvent;
+                        match event {
+                            P2PEvent::PeerConnected { peer_id } => {
+                                tracing::info!("Connected to peer: {}", peer_id);
+                            }
+                            P2PEvent::PeerDisconnected { peer_id } => {
+                                tracing::info!("Disconnected from peer: {}", peer_id);
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+            
+            Some(p2p_node)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to initialize P2P node: {}", e);
+            None
+        }
+    };
+
     // Associate VFS with node
     vfs.set_node(node.clone());
     let vfs = Arc::new(RwLock::new(vfs));
@@ -127,6 +193,7 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     *state_guard = Some(AppStateWrapper {
         vfs,
         node,
+        p2p_node,
         config,
         metrics,
     });
@@ -140,15 +207,15 @@ async fn list_files(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     let app_state = state_guard.as_ref().ok_or("Node not started")?;
     
     let vfs = app_state.vfs.read().await;
-    let file_paths = vfs.list_files();
+    let all_metadata = vfs.get_all_metadata();
     
-    // Return basic info without reading files (performance)
-    let file_infos: Vec<FileInfo> = file_paths.into_iter().map(|path| {
+    // Return actual metadata
+    let file_infos: Vec<FileInfo> = all_metadata.into_iter().map(|(path, metadata)| {
         FileInfo {
             path,
-            size: 0, // Will be updated on demand
-            blocks: 0,
-            uuid: String::new(),
+            size: metadata.size,
+            blocks: metadata.blocks,
+            uuid: metadata.uuid.to_string(),
             synced: true,
         }
     }).collect();
@@ -159,6 +226,7 @@ async fn list_files(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
 #[tauri::command]
 async fn upload_file(
     file_path: String,
+    window: tauri::Window,
     state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
 ) -> Result<FileUploadResult, String> {
     let state_guard = state.read().await;
@@ -172,18 +240,56 @@ async fn upload_file(
         .ok_or("Invalid file path")?
         .to_string();
 
-    // Upload to VFS
+    let total_size = data.len();
+    let chunk_size = app_state.config.chunk_size;
+    let total_blocks = (total_size + chunk_size - 1) / chunk_size;
+
+    // Emit initial progress
+    let _ = window.emit("upload-progress", serde_json::json!({
+        "file": file_name,
+        "progress": 0,
+        "current": 0,
+        "total": total_blocks
+    }));
+
+    let start_time = std::time::Instant::now();
+
+    // Upload to VFS with progress tracking
     let mut vfs = app_state.vfs.write().await;
+    let window_clone = window.clone();
+    let file_name_clone = file_name.clone();
+    
     let uuid = vfs
-        .write_file(&PathBuf::from(&file_name), &data)
+        .write_file_with_progress(&PathBuf::from(&file_name), &data, |current, total| {
+            let progress = (current as f64 / total as f64 * 100.0) as u32;
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { (current as f64 / elapsed) as u64 } else { 0 };
+            let eta = if speed > 0 { ((total - current) as f64 / speed as f64) as u64 } else { 0 };
+            
+            let _ = window_clone.emit("upload-progress", serde_json::json!({
+                "file": file_name_clone,
+                "progress": progress,
+                "current": current,
+                "total": total,
+                "speed": speed,
+                "eta": eta
+            }));
+        })
         .await
         .map_err(|e| e.to_string())?;
 
-    let blocks = (data.len() + app_state.config.chunk_size - 1) / app_state.config.chunk_size;
+    // Emit completion
+    let _ = window.emit("upload-progress", serde_json::json!({
+        "file": file_name,
+        "progress": 100,
+        "current": total_blocks,
+        "total": total_blocks,
+        "complete": true
+    }));
 
     Ok(FileUploadResult {
         uuid: uuid.to_string(),
-        blocks,
+        blocks: total_blocks,
     })
 }
 
@@ -191,20 +297,61 @@ async fn upload_file(
 async fn download_file(
     path: String,
     save_path: String,
+    window: tauri::Window,
     state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
 ) -> Result<(), String> {
     let state_guard = state.read().await;
     let app_state = state_guard.as_ref().ok_or("Node not started")?;
 
-    // Read from VFS
+    // Get file metadata for progress tracking
+    let vfs_read = app_state.vfs.read().await;
+    let metadata = vfs_read.get_file_metadata(&path);
+    let total_blocks = metadata.map(|m| m.blocks).unwrap_or(0);
+    drop(vfs_read);
+
+    // Emit initial progress
+    let _ = window.emit("download-progress", serde_json::json!({
+        "file": path,
+        "progress": 0,
+        "current": 0,
+        "total": total_blocks
+    }));
+
+    let start_time = std::time::Instant::now();
+
+    // Read from VFS with progress tracking
     let mut vfs = app_state.vfs.write().await;
+    let window_clone = window.clone();
+    let path_clone = path.clone();
+    
     let data = vfs
-        .read_file(&PathBuf::from(&path))
+        .read_file_with_progress(&PathBuf::from(&path), |current, total| {
+            let progress = (current as f64 / total as f64 * 100.0) as u32;
+            let elapsed = start_time.elapsed().as_secs_f64();
+            let speed = if elapsed > 0.0 { (current as f64 / elapsed) as u64 } else { 0 };
+            let eta = if speed > 0 { ((total - current) as f64 / speed as f64) as u64 } else { 0 };
+            
+            let _ = window_clone.emit("download-progress", serde_json::json!({
+                "file": path_clone,
+                "progress": progress,
+                "current": current,
+                "total": total,
+                "speed": speed,
+                "eta": eta
+            }));
+        })
         .await
         .map_err(|e| e.to_string())?;
 
     // Write to disk
     std::fs::write(&save_path, data).map_err(|e| e.to_string())?;
+
+    // Emit completion
+    let _ = window.emit("download-progress", serde_json::json!({
+        "file": path,
+        "progress": 100,
+        "complete": true
+    }));
 
     Ok(())
 }
@@ -232,10 +379,21 @@ async fn get_metrics(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> 
 
     let snapshot = app_state.metrics.snapshot();
     
+    // Get P2P peer count if available
+    let p2p_peer_count = if let Some(ref p2p_node) = app_state.p2p_node {
+        let p2p = p2p_node.read().await;
+        p2p.connected_peers_count().await
+    } else {
+        0
+    };
+    
+    // Combine legacy and P2P peer counts
+    let total_peer_count = snapshot.peer_count + p2p_peer_count;
+    
     Ok(NodeMetrics {
         block_count: snapshot.block_count,
         storage_bytes: snapshot.storage_bytes,
-        peer_count: snapshot.peer_count,
+        peer_count: total_peer_count,
         uptime_seconds: snapshot.uptime_seconds,
         requests_total: snapshot.requests_total,
         requests_failed: snapshot.requests_failed,
@@ -340,14 +498,80 @@ async fn open_with_native(
     Ok(())
 }
 
+#[tauri::command]
+async fn is_node_running(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> Result<bool, String> {
+    let state_guard = state.read().await;
+    Ok(state_guard.is_some())
+}
+
+#[tauri::command]
+async fn list_peers(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> Result<Vec<PeerInfo>, String> {
+    let state_guard = state.read().await;
+    let app_state = state_guard.as_ref().ok_or("Node not started")?;
+    
+    let mut peer_infos = Vec::new();
+    
+    // Get legacy TCP peers
+    let peers = app_state.node.peers.read().await;
+    for peer_addr in peers.iter() {
+        peer_infos.push(PeerInfo {
+            id: peer_addr.clone(),
+            address: peer_addr.clone(),
+            status: "online".to_string(),
+            blocks: 0,
+            latency: 0,
+        });
+    }
+    
+    // Get P2P peers if available
+    if let Some(ref p2p_node) = app_state.p2p_node {
+        let p2p = p2p_node.read().await;
+        let connected_peers = p2p.get_connected_peers().await;
+        
+        for peer_id in connected_peers {
+            peer_infos.push(PeerInfo {
+                id: peer_id.to_string(),
+                address: peer_id.to_string(),
+                status: "online".to_string(),
+                blocks: 0,
+                latency: 0,
+            });
+        }
+    }
+    
+    Ok(peer_infos)
+}
+
+#[tauri::command]
+async fn add_peer(
+    address: String,
+    state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
+) -> Result<(), String> {
+    let state_guard = state.read().await;
+    let app_state = state_guard.as_ref().ok_or("Node not started")?;
+    
+    let mut peers = app_state.node.peers.write().await;
+    if !peers.contains(&address) {
+        peers.push(address);
+    }
+    
+    Ok(())
+}
+
 fn main() {
+    // Initialize tracing for debugging
+    tracing_subscriber::fmt::init();
+    
     let app_state: Arc<RwLock<Option<AppStateWrapper>>> = Arc::new(RwLock::new(None));
 
     tauri::Builder::default()
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             start_node,
+            is_node_running,
             list_files,
+            list_peers,
+            add_peer,
             upload_file,
             download_file,
             delete_file,
