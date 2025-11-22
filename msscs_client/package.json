@@ -10,7 +10,12 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "build:linux": "pnpm build && tauri build --target x86_64-unknown-linux-gnu",
+    "build:windows": "pnpm build && tauri build --target x86_64-pc-windows-msvc",
+    "build:linux:appimage": "pnpm build && tauri build --target x86_64-unknown-linux-gnu -- --appimage",
+    "build:windows:nsis": "pnpm build && tauri build --target x86_64-pc-windows-msvc -- --nsis",
+    "build:all": "pnpm build && tauri build --target all"
   },
   "packageManager": "pnpm@8.0.0",
   "dependencies": {
