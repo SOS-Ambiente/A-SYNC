@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+
+// Compatibility layer for Tauri API versions
+const tauri = {
+  invoke: invoke,
+  listen: listen
+};
 
 export interface FileItem {
   path: string
