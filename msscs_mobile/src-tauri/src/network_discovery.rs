@@ -96,38 +96,75 @@ impl NetworkDiscovery {
         // Get local IP address
         let local_ip = match local_ip_address::local_ip() {
             Ok(ip) => ip,
-            Err(_) => return,
+            Err(e) => {
+                warn!("Failed to get local IP: {}", e);
+                return;
+            },
         };
 
         // Extract subnet (e.g., 192.168.1.x)
         let ip_string = local_ip.to_string();
         let ip_parts: Vec<&str> = ip_string.split('.').collect();
         if ip_parts.len() != 4 {
+            error!("Invalid IP format: {}", ip_string);
             return;
         }
 
         let subnet = format!("{}.{}.{}", ip_parts[0], ip_parts[1], ip_parts[2]);
-        
-        // Common MSSCS ports
+
+        // Scan full subnet range (254 IPs) with parallel scanning
         let ports = vec![8080, 8081, 8082, 8083, 8084];
-        
-        // Scan first 10 IPs in subnet (to avoid long scans)
-        for i in 1..=10 {
+        let mut scan_tasks = Vec::new();
+        let mut discovered_nodes = Vec::new();
+
+        // Scan all IPs in subnet (1-254)
+        for i in 1..=254 {
             for port in &ports {
                 let address = format!("{}.{}:{}", subnet, i, port);
-                
-                // Try to connect with timeout
                 let addr_clone = address.clone();
-                tokio::spawn(async move {
+
+                let task = tokio::spawn(async move {
                     if let Ok(Ok(_)) = tokio::time::timeout(
-                        Duration::from_millis(500),
+                        Duration::from_millis(1000), // Increased timeout for reliability
                         tokio::net::TcpStream::connect(&addr_clone)
                     ).await {
-                        // Connection successful - likely an MSSCS node
-                        println!("Found potential MSSCS node at {}", addr_clone);
+                        Some(addr_clone)
+                    } else {
+                        None
                     }
                 });
+                scan_tasks.push(task);
             }
+        }
+
+        // Wait for all scans and collect results
+        for task in scan_tasks {
+            if let Ok(Some(addr)) = task.await {
+                info!("Found MSSCS node at {}", addr);
+
+                // Parse address and port to create discovered node
+                if let Some((address, port_str)) = addr.rsplit_once(':') {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        discovered_nodes.push(DiscoveredNode {
+                            name: format!("Discovered: {}", address),
+                            address: address.to_string(),
+                            port,
+                            node_id: addr.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Add discovered nodes to our collection
+        for node in discovered_nodes {
+            self.discovered_nodes.insert(node.address.clone(), node);
+        }
+
+        if self.discovered_nodes.is_empty() {
+            debug!("No MSSCS nodes found in subnet {}", subnet);
+        } else {
+            info!("Found {} MSSCS nodes in subnet {}", self.discovered_nodes.len(), subnet);
         }
     }
 
