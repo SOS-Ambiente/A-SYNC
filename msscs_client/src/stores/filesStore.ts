@@ -58,33 +58,6 @@ export interface DownloadProgress {
   error?: string;
 }
 
-// Enhanced progress interface for uploads
-interface UploadProgress {
-  fileId: string;
-  progress: number; // 0-100
-  bytesUploaded: number;
-  totalBytes: number;
-  speed: number; // bytes per second
-  eta: number; // estimated time remaining in seconds
-  stage: 'uploading' | 'compressing' | 'encrypting' | 'replicating' | 'complete' | 'error';
-  error?: string;
-}
-
-// Enhanced progress interface for downloads
-interface DownloadProgress {
-  fileId: string;
-  progress: number; // 0-100
-  bytesDownloaded: number;
-  totalBytes: number;
-  speed: number; // bytes per second
-  eta: number; // estimated time remaining in seconds
-  stage: 'downloading' | 'decompressing' | 'verifying' | 'complete' | 'error';
-  chunksFound: number;
-  totalChunks: number;
-  peersConnected: number;
-  error?: string;
-}
-
 // Generate unique file ID
 function generateFileId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
