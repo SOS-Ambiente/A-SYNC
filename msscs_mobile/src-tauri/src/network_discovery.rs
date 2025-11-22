@@ -1,10 +1,11 @@
-// Network discovery module - mDNS/Bonjour for local node discovery
+// Network discovery module - Enhanced mDNS/Bonjour for local node discovery
 use msscs_v4::network::Node;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::{info, warn, error, debug};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveredNode {
