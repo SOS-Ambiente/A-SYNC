@@ -171,7 +171,7 @@ export const useFilesStore = defineStore('files', () => {
         }
       })
 
-      await invoke('download_file', { path, savePath, operationId })
+      await tauri.invoke('download_file', { path, savePath, operationId })
     } catch (error) {
       uploadProgress.value.delete(operationId)
       console.error('Failed to download file:', error)
