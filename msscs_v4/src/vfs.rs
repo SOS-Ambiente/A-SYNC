@@ -1,5 +1,5 @@
 // Virtual File System module
-use crate::block::DataBlock;
+use crate::block::{DataBlock, FileMetadata};
 use crate::config::Config;
 use crate::error::{MSSCSError, Result};
 use crate::network::Node;
@@ -8,6 +8,44 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
+
+/// File writing options
+#[derive(Debug, Clone)]
+pub struct FileWriteOptions {
+    pub chunk_size: Option<u64>,
+    pub compress: bool,
+    pub encrypt: bool,
+    pub replication_factor: u32,
+}
+
+impl Default for FileWriteOptions {
+    fn default() -> Self {
+        Self {
+            chunk_size: None, // Use default from config
+            compress: true,
+            encrypt: true,
+            replication_factor: 3,
+        }
+    }
+}
+
+/// File reading options
+#[derive(Debug, Clone)]
+pub struct FileReadOptions {
+    pub decompress: bool,
+    pub verify_integrity: bool,
+    pub prefer_local: bool,
+}
+
+impl Default for FileReadOptions {
+    fn default() -> Self {
+        Self {
+            decompress: true,
+            verify_integrity: true,
+            prefer_local: true,
+        }
+    }
+}
 
 /// Virtual File System for distributed storage
 pub struct VirtualFileSystem {
