@@ -70,10 +70,10 @@ export const useFilesStore = defineStore('files', () => {
   const downloadProgress = ref<Map<string, ProgressData>>(new Map())
 
   // Listen for upload progress events
-  listen<ProgressData>('upload-progress', (event) => {
+  tauri.listen<ProgressData>('upload-progress', (event) => {
     const data = event.payload
     uploadProgress.value.set(data.file, data)
-    
+
     if (data.complete) {
       setTimeout(() => {
         uploadProgress.value.delete(data.file)
@@ -82,10 +82,10 @@ export const useFilesStore = defineStore('files', () => {
   })
 
   // Listen for download progress events
-  listen<ProgressData>('download-progress', (event) => {
+  tauri.listen<ProgressData>('download-progress', (event) => {
     const data = event.payload
     downloadProgress.value.set(data.file, data)
-    
+
     if (data.complete) {
       setTimeout(() => {
         downloadProgress.value.delete(data.file)
