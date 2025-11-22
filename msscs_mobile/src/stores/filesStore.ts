@@ -215,13 +215,75 @@ export const useFilesStore = defineStore('files', () => {
       // Download file to temp location first
       const tempPath = `/sdcard/Download/${path.split('/').pop()}`
       await downloadFile(path, tempPath)
-      
+
       // Share using system share sheet (would need native plugin)
       console.log('Share file:', tempPath)
       return tempPath
     } catch (error) {
       console.error('Failed to share file:', error)
       throw error
+    }
+  }
+
+  // Enhanced upload function matching desktop client
+  const uploadFileEnhanced = async (filePath: string, onProgress?: (progress: EnhancedUploadProgress) => void) => {
+    try {
+      const fileId = generateFileId();
+
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('upload-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as EnhancedUploadProgress);
+          }
+        });
+      }
+
+      // Start upload with enhanced parameters
+      const result = await tauri.invoke('upload_file', {
+        fileId,
+        fileName: filePath.split('/').pop() || filePath,
+        fileSize: 0, // Will be read by backend
+        filePath: filePath,
+        chunkSize: 1024 * 1024, // 1MB chunks (matching backend)
+        compressionLevel: 'high', // Enable Huffman compression
+        replicationFactor: 3, // Replicate to 3 peers
+        encrypt: true // Enable encryption
+      });
+
+      await loadFiles();
+      return { fileId, ...result };
+    } catch (error) {
+      console.error('Upload failed:', error);
+      throw new Error(`Upload failed: ${error}`);
+    }
+  }
+
+  // Enhanced download function matching desktop client
+  const downloadFileEnhanced = async (fileId: string, savePath: string, onProgress?: (progress: EnhancedDownloadProgress) => void) => {
+    try {
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('download-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as EnhancedDownloadProgress);
+          }
+        });
+      }
+
+      // Start download
+      const result = await tauri.invoke('download_file', {
+        fileId,
+        outputPath: savePath,
+        decompress: true, // Decompress using Huffman
+        verifyIntegrity: true, // Check checksums
+        preferLocal: true // Use local cache if available
+      });
+
+      return { fileId, ...result };
+    } catch (error) {
+      console.error('Download failed:', error);
+      throw new Error(`Download failed: ${error}`);
     }
   }
 
