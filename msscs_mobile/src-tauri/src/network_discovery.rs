@@ -181,4 +181,94 @@ impl NetworkDiscovery {
         };
         self.discovered_nodes.insert(address, node);
     }
+
+    pub async fn check_network_connectivity(&self) -> NetworkStatus {
+        let mut status = NetworkStatus::new();
+
+        // Check mDNS capability
+        match self.mdns_scan().await {
+            Ok(nodes) => {
+                status.mdns_available = true;
+                info!("mDNS scan successful: found {} services", nodes.len());
+            },
+            Err(e) => {
+                status.mdns_available = false;
+                status.mdns_error = Some(e.to_string());
+                warn!("mDNS scan failed: {}", e);
+            }
+        }
+
+        // Check outbound connectivity
+        match tokio::net::TcpStream::connect("8.8.8.8:53").await {
+            Ok(_) => {
+                status.internet_available = true;
+                info!("Internet connectivity confirmed");
+            },
+            Err(e) => {
+                status.internet_available = false;
+                warn!("No internet connectivity: {}", e);
+            }
+        }
+
+        // Platform-specific checks
+        #[cfg(target_os = "windows")]
+        self.check_windows_firewall(&mut status);
+
+        #[cfg(target_os = "linux")]
+        self.check_linux_firewall(&mut status);
+
+        status
+    }
+
+    #[cfg(target_os = "windows")]
+    fn check_windows_firewall(&self, status: &mut NetworkStatus) {
+        status.firewall_blocked = true; // Assume blocked until proven otherwise
+        status.firewall_help = Some(
+            "Windows Firewall may block MSSCS. Allow MSSCS in Windows Security settings: \
+            Go to Windows Security > Firewall & network protection > Allow an app through firewall"
+        );
+        info!("Windows firewall check - assuming restrictive firewall");
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_linux_firewall(&self, status: &mut NetworkStatus) {
+        status.firewall_blocked = true; // Assume blocked until proven otherwise
+        status.firewall_help = Some(
+            "Linux firewall (ufw/iptables) may block MSSCS. \
+            To allow MSSCS: sudo ufw allow 8080:8084/tcp \
+            Or check iptables rules: sudo iptables -L -n | grep 808"
+        );
+        info!("Linux firewall check - assuming restrictive firewall");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    fn check_windows_firewall(&self, _status: &mut NetworkStatus) {
+        info!("Unsupported platform for firewall checks");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    fn check_linux_firewall(&self, _status: &mut NetworkStatus) {
+        info!("Unsupported platform for firewall checks");
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkStatus {
+    pub mdns_available: bool,
+    pub internet_available: bool,
+    pub firewall_blocked: bool,
+    pub mdns_error: Option<String>,
+    pub firewall_help: Option<String>,
+}
+
+impl NetworkStatus {
+    pub fn new() -> Self {
+        Self {
+            mdns_available: false,
+            internet_available: false,
+            firewall_blocked: false,
+            mdns_error: None,
+            firewall_help: None,
+        }
+    }
 }
