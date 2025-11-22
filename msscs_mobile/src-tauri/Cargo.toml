@@ -1,0 +1,40 @@
+[workspace]
+# This prevents the package from being part of the parent workspace
+
+[package]
+name = "msscs-mobile"
+version = "1.0.0"
+description = "MSSCS Mobile Client"
+authors = ["MSSCS Team"]
+edition = "2021"
+
+[lib]
+name = "msscs_mobile_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+tauri = { version = "2.0", features = [] }
+tauri-plugin-dialog = "2.0"
+tauri-plugin-shell = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+msscs_v4 = { path = "../../msscs_v4" }
+
+# Network discovery
+mdns-sd = "0.10"
+local-ip-address = "0.5"
+
+# File handling
+mime_guess = "2.0"
+base64 = "0.21"
+dirs = "5.0"
+
+# Android-specific (handled by Tauri v2)
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

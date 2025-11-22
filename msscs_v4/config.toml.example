@@ -1,0 +1,30 @@
+# MSSCS v4.0 Configuration File
+# Copy this file to config.toml and adjust settings as needed
+
+# Port for API server and P2P communication
+port = 8080
+
+# Directory for storing blocks and metadata
+data_dir = "./msscs_data"
+
+# Number of replicas to maintain across the network
+# Higher values increase redundancy but use more storage
+replication_factor = 3
+
+# Size of data chunks in bytes
+# Smaller chunks = more blocks, better deduplication
+# Larger chunks = fewer blocks, less overhead
+chunk_size = 1024
+
+# Logging level: trace, debug, info, warn, error
+log_level = "info"
+
+# Bootstrap peers for joining the network
+# Format: ["address:port", "address:port"]
+# Leave empty for standalone node
+bootstrap_peers = []
+
+# Optional API keys for authentication
+# If set, clients must provide X-API-Key header
+# Leave commented out to disable authentication
+# api_keys = ["your-secret-key-here", "another-key"]

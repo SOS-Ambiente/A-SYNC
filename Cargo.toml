@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "msscs_v4",
+    "msscs_client/src-tauri"
+]
+exclude = [
+    "msscs_mobile/src-tauri"
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }

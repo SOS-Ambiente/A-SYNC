@@ -1,0 +1,23 @@
+[package]
+name = "msscs-client"
+version = "1.0.0"
+description = "MSSCS Desktop Client"
+authors = ["MSSCS Team"]
+license = ""
+repository = ""
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+tauri = { version = "1.5", features = ["dialog-all", "shell-open", "window-all"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"] }
+msscs_v4 = { path = "../../msscs_v4" }
+base64 = "0.22"
+dirs = "5.0"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
