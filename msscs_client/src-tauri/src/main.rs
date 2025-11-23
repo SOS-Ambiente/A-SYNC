@@ -373,7 +373,7 @@ async fn get_metrics(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> 
     // Get P2P peer count if available
     let p2p_peer_count = if let Some(ref p2p_node) = app_state.p2p_node {
         let p2p = p2p_node.read().await;
-        p2p.connected_peers_count().await
+        p2p.get_connected_peers().await.len()
     } else {
         0
     };
