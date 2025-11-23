@@ -1,0 +1,20 @@
+{
+  "name": "msscs-web",
+  "version": "1.0.0",
+  "description": "Browser-based P2P encrypted storage system",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "p2p",
+    "encryption",
+    "storage",
+    "webrtc",
+    "blockchain"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {}
+}

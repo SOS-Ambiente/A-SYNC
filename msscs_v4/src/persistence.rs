@@ -1,5 +1,5 @@
 // Persistence module
-use crate::block::{DataBlock, FileMetadata};
+use crate::block::DataBlock;
 use crate::error::{MSSCSError, Result};
 use std::collections::HashMap;
 use std::fs;
@@ -154,54 +154,7 @@ impl PersistenceManager {
         Ok(deleted_count)
     }
 
-    /// Save file metadata to disk
-    pub fn save_file_metadata(&self, metadata: &FileMetadata) -> Result<()> {
-        // Use the first chunk ID as the file ID for metadata storage
-        let file_id = metadata.chunk_ids.first()
-            .ok_or_else(|| MSSCSError::InvalidData("No chunk IDs found in metadata".to_string()))?;
-
-        let metadata_dir = self.data_dir.join("metadata");
-        fs::create_dir_all(&metadata_dir)?;
-
-        let filename = format!("{}.meta", file_id);
-        let path = metadata_dir.join(filename);
-
-        let serialized = serde_json::to_string_pretty(metadata)
-            .map_err(|e| MSSCSError::Config(format!("Failed to serialize file metadata: {}", e)))?;
-        fs::write(path, serialized)?;
-
-        Ok(())
-    }
-
-    /// Load file metadata from disk
-    pub fn load_file_metadata(&self, file_id: &str) -> Result<Option<FileMetadata>> {
-        let metadata_dir = self.data_dir.join("metadata");
-        let filename = format!("{}.meta", file_id);
-        let path = metadata_dir.join(filename);
-
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let data = fs::read_to_string(&path)?;
-        let metadata: FileMetadata = serde_json::from_str(&data)
-            .map_err(|e| MSSCSError::Config(format!("Failed to parse file metadata: {}", e)))?;
-
-        Ok(Some(metadata))
-    }
-
-    /// Delete file metadata from disk
-    pub fn delete_file_metadata(&self, file_id: &str) -> Result<()> {
-        let metadata_dir = self.data_dir.join("metadata");
-        let filename = format!("{}.meta", file_id);
-        let path = metadata_dir.join(filename);
-
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
-
-        Ok(())
-    }
+    // FileMetadata methods removed - will be implemented when FileMetadata struct is added
 
     /// List all file metadata
     pub fn list_file_metadata(&self) -> Result<Vec<String>> {

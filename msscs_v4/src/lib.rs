@@ -14,7 +14,7 @@ pub mod api;
 pub mod metrics;
 
 // Re-export commonly used types
-pub use block::{DataBlock, FileMetadata, calculate_checksum};
+pub use block::{DataBlock, calculate_checksum};
 pub use error::{MSSCSError, Result};
 pub use config::Config;
 pub use identity::{QuantumIdentity, IdentityManager, ReputationTier};

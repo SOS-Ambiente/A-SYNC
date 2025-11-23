@@ -7,20 +7,19 @@ use msscs_v4::{
     network::Node,
     persistence::PersistenceManager,
     vfs::VirtualFileSystem,
-    identity::QuantumIdentity,
-    p2p_network::{P2PNode, P2PConfig},
+    p2p_network::{P2PNode, P2PConfig, P2PNodeCommand},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::State;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, mpsc};
 
 // Application state
 struct AppStateWrapper {
     vfs: Arc<RwLock<VirtualFileSystem>>,
     node: Arc<Node>,
-    p2p_node: Option<Arc<RwLock<P2PNode>>>,
+    p2p_command_tx: Option<mpsc::UnboundedSender<P2PNodeCommand>>,
     config: Arc<Config>,
     metrics: Arc<Metrics>,
 }
@@ -140,14 +139,14 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
         enable_mdns: true,  // Enable local network peer discovery
     };
     
-    let p2p_node = match P2PNode::new(p2p_config).await {
-        Ok(mut p2p_node) => {
+    let p2p_command_tx = match P2PNode::new(p2p_config).await {
+        Ok(p2p_node) => {
+            // Get command sender before starting
+            let cmd_tx = p2p_node.get_command_sender();
+            
             let (mut event_rx, _local_blocks) = p2p_node.start().await.map_err(|e| e.to_string())?;
 
-            let p2p_node = Arc::new(RwLock::new(p2p_node));
-
             // Spawn event handler
-            let p2p_clone = p2p_node.clone();
             tokio::spawn(async move {
                 while let Some(event) = event_rx.recv().await {
                     use msscs_v4::p2p_network::P2PEvent;
@@ -166,7 +165,7 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
                 }
             });
 
-            Some(p2p_node)
+            Some(cmd_tx)
         }
         Err(e) => {
             tracing::warn!("Failed to initialize P2P node: {}", e);
@@ -184,7 +183,7 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     *state_guard = Some(AppStateWrapper {
         vfs,
         node,
-        p2p_node,
+        p2p_command_tx,
         config,
         metrics,
     });
@@ -371,9 +370,13 @@ async fn get_metrics(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> 
     let snapshot = app_state.metrics.snapshot();
     
     // Get P2P peer count if available
-    let p2p_peer_count = if let Some(ref p2p_node) = app_state.p2p_node {
-        let p2p = p2p_node.read().await;
-        p2p.get_connected_peers().await.len()
+    let p2p_peer_count = if let Some(ref cmd_tx) = app_state.p2p_command_tx {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        if cmd_tx.send(P2PNodeCommand::GetConnectedPeers(reply_tx)).is_ok() {
+            reply_rx.await.map(|peers| peers.len()).unwrap_or(0)
+        } else {
+            0
+        }
     } else {
         0
     };
@@ -515,18 +518,20 @@ async fn list_peers(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     }
     
     // Get P2P peers if available
-    if let Some(ref p2p_node) = app_state.p2p_node {
-        let p2p = p2p_node.read().await;
-        let connected_peers = p2p.get_connected_peers().await;
-        
-        for peer_id in connected_peers {
-            peer_infos.push(PeerInfo {
-                id: peer_id.to_string(),
-                address: peer_id.to_string(),
-                status: "online".to_string(),
-                blocks: 0,
-                latency: 0,
-            });
+    if let Some(ref cmd_tx) = app_state.p2p_command_tx {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        if cmd_tx.send(P2PNodeCommand::GetConnectedPeers(reply_tx)).is_ok() {
+            if let Ok(connected_peers) = reply_rx.await {
+                for peer_id in connected_peers {
+                    peer_infos.push(PeerInfo {
+                        id: peer_id.to_string(),
+                        address: peer_id.to_string(),
+                        status: "online".to_string(),
+                        blocks: 0,
+                        latency: 0,
+                    });
+                }
+            }
         }
     }
     

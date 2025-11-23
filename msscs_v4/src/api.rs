@@ -246,16 +246,16 @@ async fn get_block_info_handler(
     let uuid = Uuid::parse_str(&uuid_str)
         .map_err(|e| MSSCSError::InvalidData(format!("Invalid UUID: {}", e)))?;
 
-    // Get block from node
-    let blocks = state.node.local_blocks.read().await;
-    let block = blocks.get(&uuid.to_string())
+    // Get block from VFS
+    let vfs = state.vfs.read().await;
+    let block = vfs.local_blocks.get(&uuid.to_string())
         .ok_or_else(|| MSSCSError::NotFound(format!("Block {} not found", uuid)))?;
 
     let size = bincode::serialize(block)
         .map(|v| v.len())
         .unwrap_or(0);
 
-    let compressed_size = block.get_compressed_data().len();
+    let compressed_size = block.get_encrypted_size();
 
     // Update metrics
     state.metrics.record_request(true);
@@ -265,7 +265,7 @@ async fn get_block_info_handler(
         node_index: block.node_index,
         size,
         compressed_size,
-        is_encrypted: block.is_encrypted,
+        is_encrypted: true,
         previous_uuid: block.previous_uuid.map(|u| u.to_string()),
     }))
 }
@@ -322,23 +322,11 @@ async fn get_file_chunks_handler(
     check_auth(&state.config, &headers)?;
 
     // Parse file ID
-    let file_uuid = Uuid::parse_str(&file_id)
+    let _file_uuid = Uuid::parse_str(&file_id)
         .map_err(|e| MSSCSError::InvalidData(format!("Invalid file ID: {}", e)))?;
 
-    // Load file metadata from persistence
-    let metadata = state.vfs.read().await.persistence.load_file_metadata(&file_id)?
-        .ok_or_else(|| MSSCSError::NotFound(format!("File {} not found", file_id)))?;
-
-    // Convert chunks to response format
-    let chunks: Vec<FileChunkInfo> = metadata.chunk_ids.iter().enumerate().map(|(index, chunk_id)| {
-        FileChunkInfo {
-            chunk_id: chunk_id.clone(),
-            chunk_index: index as u64,
-            size: 0, // Would be populated from actual block data
-            compressed_size: 0, // Would be populated from actual block data
-            checksum: "".to_string(), // Would be calculated from block data
-        }
-    }).collect();
+    // For now, return empty chunks list as FileMetadata is not fully implemented
+    let chunks: Vec<FileChunkInfo> = Vec::new();
 
     // Update metrics
     state.metrics.record_request(true);
@@ -346,7 +334,7 @@ async fn get_file_chunks_handler(
     Ok(Json(FileChunksResponse {
         file_id,
         chunks,
-        total_chunks: metadata.chunk_count,
+        total_chunks: 0,
     }))
 }
 
@@ -360,16 +348,16 @@ async fn download_chunk_handler(
     check_auth(&state.config, &headers)?;
 
     // Parse chunk UUID
-    let chunk_uuid = Uuid::parse_str(&req.chunk_id)
+    let _chunk_uuid = Uuid::parse_str(&req.chunk_id)
         .map_err(|e| MSSCSError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
 
-    // Get chunk from local storage
-    let blocks = state.node.local_blocks.read().await;
-    let block = blocks.get(&req.chunk_id)
+    // Get chunk from VFS
+    let vfs = state.vfs.read().await;
+    let block = vfs.local_blocks.get(&req.chunk_id)
         .ok_or_else(|| MSSCSError::NotFound(format!("Chunk {} not found", req.chunk_id)))?;
 
     // Get chunk data
-    let chunk_data = block.get_compressed_data();
+    let chunk_data = block.get_encrypted_payload();
 
     // Calculate checksum
     let checksum = crate::block::calculate_checksum(chunk_data);

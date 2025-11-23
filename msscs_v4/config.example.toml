@@ -1,0 +1,69 @@
+# MSSCS Configuration File
+# Copy this to config.toml and customize for your deployment
+
+# Network port for HTTP API
+port = 8080
+
+# Data directory for storing blocks
+data_dir = "./msscs_data"
+
+# Number of peers to replicate each block to
+replication_factor = 3
+
+# Chunk size in bytes (1KB default)
+chunk_size = 1024
+
+# Logging level: trace, debug, info, warn, error
+log_level = "info"
+
+# Bootstrap peers for P2P network discovery
+# Format: "ip:port" for simple TCP
+# For libp2p nodes, use multiaddr format in command line args
+bootstrap_peers = [
+    # Local testing (same machine)
+    # "127.0.0.1:8081",
+    # "127.0.0.1:8082",
+    
+    # Internet connectivity (replace with actual public nodes)
+    # "bootstrap1.example.com:4001",
+    # "bootstrap2.example.com:4001",
+    # "1.2.3.4:4001",
+]
+
+# Optional API keys for authentication
+# api_keys = ["your-secret-key-here"]
+
+# ============================================
+# INTERNET CONNECTIVITY CONFIGURATION
+# ============================================
+
+# To enable internet P2P connectivity:
+#
+# 1. Deploy bootstrap nodes on public servers:
+#    ./msscs_node --port 8080 --p2p-port 4001 --public-ip YOUR_PUBLIC_IP
+#
+# 2. Get the Peer ID from the bootstrap node output
+#
+# 3. Add bootstrap peers using command line:
+#    ./msscs_node --bootstrap "/ip4/PUBLIC_IP/tcp/4001/p2p/PEER_ID"
+#
+# 4. For NAT traversal, enable relay:
+#    ./msscs_node --relay true --mdns false
+#
+# 5. For local network discovery:
+#    ./msscs_node --mdns true
+
+# ============================================
+# PRODUCTION DEPLOYMENT CHECKLIST
+# ============================================
+
+# [ ] Deploy 3-5 bootstrap nodes on different cloud providers
+# [ ] Configure firewall to allow P2P port (default: 4001)
+# [ ] Set up monitoring and health checks
+# [ ] Configure proper passphrases (not default!)
+# [ ] Enable TLS for HTTP API (use reverse proxy)
+# [ ] Set up backup and disaster recovery
+# [ ] Configure rate limiting and DDoS protection
+# [ ] Document bootstrap peer addresses for clients
+# [ ] Test NAT traversal from different network types
+# [ ] Monitor peer connections and replication

@@ -1,26 +1,22 @@
 // P2P Network module - Real libp2p Kademlia DHT implementation
 use crate::block::DataBlock;
-use crate::error::{MSSCSError, Result};
+use crate::error::MSSCSError;
 use futures::prelude::*;
 use libp2p::{
-    core::{self, upgrade, Multiaddr, PeerId, Transport},
-    dns,
-    identity::{self, Keypair},
-    kad::{self, store::MemoryStore, Kademlia, KademliaEvent, QueryId, BootstrapOk},
-    mplex,
-    noise::{Keypair as NoiseKeypair, X25519Spec, X25519},
-    request_response::{self, ProtocolSupport, RequestResponse, RequestResponseConfig},
+    core::Multiaddr,
+    identity,
+    kad::{store::MemoryStore, BootstrapOk, QueryId, Quorum, Record, RecordKey},
+    mdns,
+    noise,
+    request_response::{self, ProtocolSupport},
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp,
-    yamux,
-    Swarm,
+    tcp, yamux, PeerId, Swarm, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 /// P2P Configuration
@@ -58,10 +54,36 @@ pub enum P2PEvent {
 
 /// P2P Network behavior combining Kademlia DHT and Request-Response
 #[derive(NetworkBehaviour)]
+#[behaviour(to_swarm = "P2PBehaviourEvent")]
 pub struct P2PBehaviour {
-    pub kademlia: Kademlia<MemoryStore>,
-    pub request_response: RequestResponse<P2PCodec>,
-    pub mdns: libp2p::mdns::Mdns,
+    kademlia: libp2p::kad::Behaviour<MemoryStore>,
+    request_response: libp2p::request_response::Behaviour<P2PCodec>,
+    mdns: mdns::tokio::Behaviour,
+}
+
+#[derive(Debug)]
+pub enum P2PBehaviourEvent {
+    Kademlia(libp2p::kad::Event),
+    RequestResponse(libp2p::request_response::Event<P2PRequest, P2PResponse>),
+    Mdns(mdns::Event),
+}
+
+impl From<libp2p::kad::Event> for P2PBehaviourEvent {
+    fn from(event: libp2p::kad::Event) -> Self {
+        P2PBehaviourEvent::Kademlia(event)
+    }
+}
+
+impl From<libp2p::request_response::Event<P2PRequest, P2PResponse>> for P2PBehaviourEvent {
+    fn from(event: libp2p::request_response::Event<P2PRequest, P2PResponse>) -> Self {
+        P2PBehaviourEvent::RequestResponse(event)
+    }
+}
+
+impl From<mdns::Event> for P2PBehaviourEvent {
+    fn from(event: mdns::Event) -> Self {
+        P2PBehaviourEvent::Mdns(event)
+    }
 }
 
 /// P2P Request/Response protocol codec
@@ -77,9 +99,10 @@ pub enum P2PResponse {
     Pong,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct P2PCodec;
 
+#[async_trait::async_trait]
 impl request_response::Codec for P2PCodec {
     type Protocol = &'static str;
     type Request = P2PRequest;
@@ -147,43 +170,40 @@ impl request_response::Codec for P2PCodec {
     }
 }
 
+/// Commands that can be sent to the P2P node
+pub enum P2PNodeCommand {
+    GetConnectedPeers(tokio::sync::oneshot::Sender<Vec<PeerId>>),
+}
+
 /// Main P2P Node implementation
 pub struct P2PNode {
     swarm: Swarm<P2PBehaviour>,
     event_sender: mpsc::UnboundedSender<P2PEvent>,
     local_blocks: Arc<RwLock<HashMap<Uuid, DataBlock>>>,
     pending_requests: Arc<RwLock<HashMap<QueryId, Uuid>>>,
+    command_receiver: Option<mpsc::UnboundedReceiver<P2PNodeCommand>>,
+    command_sender: mpsc::UnboundedSender<P2PNodeCommand>,
 }
 
 impl P2PNode {
     /// Create new P2P node
-    pub async fn new(config: P2PConfig) -> Result<Self> {
+    pub async fn new(config: P2PConfig) -> std::result::Result<Self, MSSCSError> {
         info!("Initializing P2P node with config: {:?}", config);
 
         // Generate or load keypair
         let keypair = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(keypair.public());
 
-        // Build transport
-        let transport = tcp::TokioTcpTransport::default()
-            .upgrade(core::upgrade::Version::V1)
-            .authenticate(noise::NoiseAuthenticated::xx(
-                &NoiseKeypair::new().into_authentic(&keypair)?,
-                X25519Spec::new(),
-            ))
-            .multiplex(yamux::YamuxConfig::default())
-            .boxed();
-
         // Create network behavior
         let store = MemoryStore::new(peer_id);
-        let kademlia = Kademlia::new(peer_id, store);
+        let kademlia = libp2p::kad::Behaviour::new(peer_id, store);
 
-        let request_response = RequestResponse::new(
-            [(b"/msscs/1.0.0", ProtocolSupport::Full)],
-            RequestResponseConfig::default(),
+        let request_response = libp2p::request_response::Behaviour::new(
+            std::iter::once(("/msscs/1.0.0", ProtocolSupport::Full)),
+            libp2p::request_response::Config::default(),
         );
 
-        let mdns = libp2p::mdns::Mdns::new(Default::default()).await
+        let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
             .map_err(|e| MSSCSError::Network(format!("Failed to create mDNS: {}", e)))?;
 
         let behaviour = P2PBehaviour {
@@ -192,15 +212,28 @@ impl P2PNode {
             mdns,
         };
 
-        // Create swarm
-        let mut swarm = Swarm::with_tokio_executor(transport, behaviour, peer_id);
+        // Create swarm with new API
+        let mut swarm = SwarmBuilder::with_existing_identity(keypair)
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .map_err(|e| MSSCSError::Network(format!("Failed to build transport: {}", e)))?
+            .with_behaviour(|_| behaviour)
+            .map_err(|e| MSSCSError::Network(format!("Failed to create behaviour: {}", e)))?
+            .build();
 
         // Listen on specified port
         let listen_addr = format!("/ip4/0.0.0.0/tcp/{}", config.listen_port);
-        swarm.listen_on(listen_addr.parse()?)
+        let addr: Multiaddr = listen_addr.parse()
+            .map_err(|e: libp2p::multiaddr::Error| MSSCSError::Network(format!("Invalid address: {}", e)))?;
+        swarm.listen_on(addr)
             .map_err(|e| MSSCSError::Network(format!("Failed to listen on port: {}", e)))?;
 
-        let (event_sender, mut event_receiver) = mpsc::unbounded_channel();
+        let (event_sender, _event_receiver) = mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
         info!("P2P node created with peer ID: {}", peer_id);
 
@@ -209,103 +242,123 @@ impl P2PNode {
             event_sender,
             local_blocks: Arc::new(RwLock::new(HashMap::new())),
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            command_receiver: Some(cmd_rx),
+            command_sender: cmd_tx,
         })
+    }
+    
+    /// Get the command sender for this node
+    pub fn get_command_sender(&self) -> mpsc::UnboundedSender<P2PNodeCommand> {
+        self.command_sender.clone()
     }
 
     /// Start the P2P node and return event receiver
-    pub async fn start(mut self) -> Result<(mpsc::UnboundedReceiver<P2PEvent>, Arc<RwLock<HashMap<Uuid, DataBlock>>>)> {
+    pub async fn start(mut self) -> std::result::Result<(mpsc::UnboundedReceiver<P2PEvent>, Arc<RwLock<HashMap<Uuid, DataBlock>>>), MSSCSError> {
         let event_sender = self.event_sender.clone();
-        let local_blocks = self.local_blocks.clone();
+        let local_blocks_clone = self.local_blocks.clone();
+        let local_blocks_return = self.local_blocks.clone();
+        let (_, event_receiver) = mpsc::unbounded_channel();
+        
+        // Take command receiver
+        let mut cmd_rx = self.command_receiver.take().expect("Command receiver already taken");
 
         // Run swarm event loop in background
         tokio::spawn(async move {
             loop {
-                match self.swarm.select_next_some().await {
-                    SwarmEvent::Behaviour(event) => {
-                        match event {
-                            P2PBehaviourEvent::Kademlia(kad_event) => {
-                                match kad_event {
-                                    KademliaEvent::BootstrapOk(BootstrapOk { .. }) => {
-                                        let _ = event_sender.send(P2PEvent::BootstrapComplete);
-                                    }
-                                    KademliaEvent::GetClosestPeersResult(result) => {
-                                        if result.peers.is_empty() {
-                                            let _ = event_sender.send(P2PEvent::Error("No peers found".to_string()));
-                                        }
-                                    }
-                                    KademliaEvent::GetProvidersResult(result) => {
-                                        debug!("Got providers: {:?}", result);
-                                    }
-                                    KademliaEvent::GetRecordResult(result) => {
-                                        debug!("Got record: {:?}", result);
-                                    }
-                                    KademliaEvent::PutRecordResult(result) => {
-                                        debug!("Put record: {:?}", result);
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            P2PBehaviourEvent::RequestResponse(event) => {
-                                match event {
-                                    request_response::Event::Message { message, .. } => {
-                                        match message {
-                                            request_response::Message::Request {
-                                                request: P2PRequest::GetBlock { id },
-                                                channel,
-                                                peer
-                                            } => {
-                                                let blocks = local_blocks.read().await;
-                                                let block = blocks.get(&id).cloned();
-
-                                                if let Err(e) = self.swarm.send_response(channel, P2PResponse::Block { data: block }) {
-                                                    warn!("Failed to send block response to {}: {}", peer, e);
+                tokio::select! {
+                    // Handle swarm events
+                    Some(event) = self.swarm.next() => {
+                    match event {
+                        SwarmEvent::Behaviour(behaviour_event) => {
+                            match behaviour_event {
+                                P2PBehaviourEvent::Kademlia(kad_event) => {
+                                    match kad_event {
+                                        libp2p::kad::Event::OutboundQueryProgressed { result, .. } => {
+                                            match result {
+                                                libp2p::kad::QueryResult::Bootstrap(Ok(BootstrapOk { .. })) => {
+                                                    let _ = event_sender.send(P2PEvent::BootstrapComplete);
                                                 }
-
-                                                let _ = event_sender.send(P2PEvent::BlockRequested { peer, block_id: id });
+                                                libp2p::kad::QueryResult::GetClosestPeers(Ok(result)) => {
+                                                    if result.peers.is_empty() {
+                                                        let _ = event_sender.send(P2PEvent::Error("No peers found".to_string()));
+                                                    }
+                                                }
+                                                libp2p::kad::QueryResult::GetRecord(Ok(result)) => {
+                                                    debug!("Got record: {:?}", result);
+                                                }
+                                                libp2p::kad::QueryResult::PutRecord(Ok(_)) => {
+                                                    debug!("Put record successful");
+                                                }
+                                                _ => {}
                                             }
-                                            request_response::Event::Message {
-                                                request: P2PRequest::Ping,
-                                                channel,
-                                                peer
-                                            } => {
-                                                let _ = self.swarm.send_response(channel, P2PResponse::Pong);
-                                            }
-                                            _ => {}
                                         }
+                                        _ => {}
                                     }
-                                    request_response::Event::Response {
-                                        response: P2PResponse::Block { data: Some(block) },
-                                        peer
-                                    } => {
-                                        let _ = event_sender.send(P2PEvent::BlockReceived { peer, block });
-                                    }
-                                    request_response::Event::Response {
-                                        response: P2PResponse::Block { data: None },
-                                        peer
-                                    } => {
-                                        debug!("Peer {} doesn't have requested block", peer);
-                                    }
-                                    _ => {}
                                 }
-                            }
-                            P2PBehaviourEvent::Mdns(event) => {
-                                match event {
-                                    libp2p::mdns::Event::Discovered(list) => {
-                                        for (peer_id, addr) in list {
-                                            info!("Discovered peer {} at {}", peer_id, addr);
-                                            let _ = self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-                                            let _ = self.swarm.dial(peer_id);
+                                P2PBehaviourEvent::RequestResponse(req_resp_event) => {
+                                    match req_resp_event {
+                                        request_response::Event::Message { peer, message } => {
+                                            match message {
+                                                request_response::Message::Request {
+                                                    request,
+                                                    channel,
+                                                    ..
+                                                } => {
+                                                    match request {
+                                                        P2PRequest::GetBlock { id } => {
+                                                            let blocks = local_blocks_clone.read().await;
+                                                            let block = blocks.get(&id).cloned();
+
+                                                            if let Err(e) = self.swarm.behaviour_mut().request_response.send_response(channel, P2PResponse::Block { data: block }) {
+                                                                warn!("Failed to send block response to {}: {:?}", peer, e);
+                                                            }
+
+                                                            let _ = event_sender.send(P2PEvent::BlockRequested { peer, block_id: id });
+                                                        }
+                                                        P2PRequest::Ping => {
+                                                            let _ = self.swarm.behaviour_mut().request_response.send_response(channel, P2PResponse::Pong);
+                                                        }
+                                                    }
+                                                }
+                                                request_response::Message::Response {
+                                                    response,
+                                                    ..
+                                                } => {
+                                                    match response {
+                                                        P2PResponse::Block { data: Some(block) } => {
+                                                            let _ = event_sender.send(P2PEvent::BlockReceived { peer, block });
+                                                        }
+                                                        P2PResponse::Block { data: None } => {
+                                                            debug!("Peer {} doesn't have requested block", peer);
+                                                        }
+                                                        P2PResponse::Pong => {
+                                                            debug!("Received pong from {}", peer);
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
+                                        _ => {}
                                     }
-                                    libp2p::mdns::Event::Expired(list) => {
-                                        for (peer_id, _addr) in list {
-                                            debug!("Peer {} expired from mDNS", peer_id);
+                                }
+                                P2PBehaviourEvent::Mdns(mdns_event) => {
+                                    match mdns_event {
+                                        mdns::Event::Discovered(list) => {
+                                            for (peer_id, addr) in list {
+                                                info!("Discovered peer {} at {}", peer_id, addr);
+                                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                                                let _ = self.swarm.dial(peer_id);
+                                            }
+                                        }
+                                        mdns::Event::Expired(list) => {
+                                            for (peer_id, _addr) in list {
+                                                debug!("Peer {} expired from mDNS", peer_id);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
                     SwarmEvent::NewListenAddr { address, .. } => {
                         info!("Listening on {}", address);
                     }
@@ -317,21 +370,32 @@ impl P2PNode {
                         info!("Disconnected from {} (cause: {:?})", peer_id, cause);
                         let _ = event_sender.send(P2PEvent::PeerDisconnected(peer_id));
                     }
-                    SwarmEvent::IncomingConnection { local_addr, send_back_addr } => {
-                        debug!("Incoming connection from {} on {}", send_back_addr, local_addr);
+                        SwarmEvent::IncomingConnection { local_addr, send_back_addr, connection_id } => {
+                            debug!("Incoming connection {:?} from {} on {}", connection_id, send_back_addr, local_addr);
+                        }
+                        SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error, connection_id } => {
+                            warn!("Incoming connection error {:?} from {} on {}: {}", connection_id, send_back_addr, local_addr, error);
+                        }
+                        SwarmEvent::OutgoingConnectionError { peer_id, error, connection_id } => {
+                            warn!("Outgoing connection error {:?} to {:?}: {}", connection_id, peer_id, error);
+                        }
+                        _ => {}
                     }
-                    SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error } => {
-                        warn!("Incoming connection error from {} on {}: {}", send_back_addr, local_addr, error);
                     }
-                    SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                        warn!("Outgoing connection error to {}: {}", peer_id, error);
+                    // Handle commands
+                    Some(cmd) = cmd_rx.recv() => {
+                        match cmd {
+                            P2PNodeCommand::GetConnectedPeers(reply) => {
+                                let peers: Vec<PeerId> = self.swarm.connected_peers().copied().collect();
+                                let _ = reply.send(peers);
+                            }
+                        }
                     }
-                    _ => {}
                 }
             }
         });
 
-        Ok((event_receiver, local_blocks))
+        Ok((event_receiver, local_blocks_return))
     }
 
     /// Get connected peers
@@ -340,7 +404,7 @@ impl P2PNode {
     }
 
     /// Bootstrap the DHT
-    pub async fn bootstrap(&mut self, config: &P2PConfig) -> Result<()> {
+    pub async fn bootstrap(&mut self, config: &P2PConfig) -> std::result::Result<(), MSSCSError> {
         if !config.bootstrap_peers.is_empty() {
             for addr in &config.bootstrap_peers {
                 if let Err(e) = self.swarm.dial(addr.clone()) {
@@ -358,15 +422,15 @@ impl P2PNode {
     }
 
     /// Store block in local storage and replicate to network
-    pub async fn store_block(&mut self, block: DataBlock) -> Result<()> {
+    pub async fn store_block(&mut self, block: DataBlock) -> std::result::Result<(), MSSCSError> {
         let block_id = block.uuid;
 
         // Store locally
         self.local_blocks.write().await.insert(block_id, block.clone());
 
         // Provide to DHT
-        let key = kad::record::Key::new(&block_id.to_string());
-        let record = kad::record::Record {
+        let key = RecordKey::new(&block_id.to_string());
+        let record = Record {
             key,
             value: serde_json::to_vec(&block)?,
             publisher: None,
@@ -376,7 +440,8 @@ impl P2PNode {
         let query_id = self.swarm
             .behaviour_mut()
             .kademlia
-            .put_record(record, kad::record::Quorum::One);
+            .put_record(record, Quorum::One)
+            .map_err(|e| MSSCSError::Network(format!("Failed to put record: {:?}", e)))?;
 
         debug!("Storing block {} in DHT with query ID: {:?}", block_id, query_id);
 
@@ -384,9 +449,9 @@ impl P2PNode {
     }
 
     /// Request block from network
-    pub async fn get_block(&mut self, block_id: Uuid) -> Result<()> {
+    pub async fn get_block(&mut self, block_id: Uuid) -> std::result::Result<(), MSSCSError> {
         // Try to get from DHT first
-        let key = kad::record::Key::new(&block_id.to_string());
+        let key = RecordKey::new(&block_id.to_string());
         let query_id = self.swarm
             .behaviour_mut()
             .kademlia
@@ -402,26 +467,30 @@ impl P2PNode {
                 .request_response
                 .send_request(&peer, P2PRequest::GetBlock { id: block_id });
 
-            self.pending_requests.write().await.insert(request_id.into(), block_id);
+            debug!("Sent block request to peer {}: {:?}", peer, request_id);
         }
 
         Ok(())
     }
 
     /// Add peer address to DHT
-    pub async fn add_peer(&mut self, addr: Multiaddr) -> Result<()> {
-        if let Some(peer_id) = addr.iter().last().and_then(|p| match p {
-            libp2p::multiaddr::Protocol::P2p(peer) => Some(PeerId::from_multihash(peer).unwrap()),
+    pub async fn add_peer(&mut self, addr: Multiaddr) -> std::result::Result<(), MSSCSError> {
+        if let Some(peer_id) = addr.iter().find_map(|p| match p {
+            libp2p::multiaddr::Protocol::P2p(hash) => {
+                // hash is already a Multihash, convert to PeerId
+                PeerId::from_multihash(hash.into()).ok()
+            },
             _ => None,
         }) {
-            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
         }
-        self.swarm.dial(addr)?;
+        self.swarm.dial(addr)
+            .map_err(|e| MSSCSError::Network(format!("Failed to dial: {:?}", e)))?;
         Ok(())
     }
 
     /// Ping a peer
-    pub async fn ping_peer(&mut self, peer_id: PeerId) -> Result<()> {
+    pub async fn ping_peer(&mut self, peer_id: PeerId) -> std::result::Result<(), MSSCSError> {
         self.swarm
             .behaviour_mut()
             .request_response

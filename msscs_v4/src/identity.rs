@@ -34,17 +34,19 @@ pub struct QuantumIdentity {
 impl QuantumIdentity {
     /// Create new quantum identity
     pub fn new(name: String) -> Result<Self> {
-        use ed25519_dalek::{Keypair, SignatureError};
-        use pqc_kyber::Kyber1024;
+        use ed25519_dalek::SigningKey;
+        use pqc_kyber::*;
 
         let id = Uuid::new_v4();
 
         // Generate Ed25519 keypair for standard operations
-        let ed_keypair = Keypair::generate(&mut rand::rngs::OsRng);
-        let public_key = ed_keypair.public.to_bytes().to_vec();
+        let ed_keypair = SigningKey::generate(&mut rand::rngs::OsRng);
+        let public_key = ed_keypair.verifying_key().to_bytes().to_vec();
 
         // Generate post-quantum keypair (Kyber-1024)
-        let (pq_public_key, _pq_secret_key) = Kyber1024::keypair();
+        let mut rng = rand::rngs::OsRng;
+        let keys = keypair(&mut rng).unwrap();
+        let pq_public_key = keys.public.to_vec();
 
         let identity = QuantumIdentity {
             id,
@@ -66,7 +68,7 @@ impl QuantumIdentity {
     }
 
     /// Sign data using Ed25519 (requires secret key - would need secure storage)
-    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+    pub fn sign(&self, _data: &[u8]) -> Result<Vec<u8>> {
         // Note: This would require the secret key to be securely stored
         // For now, return placeholder implementation
         warn!("Identity::sign() called but secret key storage not implemented");
@@ -75,31 +77,39 @@ impl QuantumIdentity {
 
     /// Verify signature using Ed25519 public key
     pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<bool> {
-        use ed25519_dalek::{PublicKey, Verifier, Signature};
+        use ed25519_dalek::{VerifyingKey, Verifier, Signature};
 
         let public_key_bytes: [u8; 32] = self.public_key.clone()
             .try_into()
             .map_err(|_| MSSCSError::InvalidData("Invalid public key format".to_string()))?;
 
-        let public_key = PublicKey::from_bytes(&public_key_bytes)
+        let public_key = VerifyingKey::from_bytes(&public_key_bytes)
             .map_err(|_| MSSCSError::InvalidData("Invalid public key".to_string()))?;
 
-        let signature = Signature::from_bytes(signature)
-            .map_err(|_| MSSCSError::InvalidData("Invalid signature format".to_string()))?;
+        let sig_bytes: [u8; 64] = signature.try_into()
+            .map_err(|_| MSSCSError::InvalidData("Invalid signature length".to_string()))?;
+
+        let signature = Signature::from_bytes(&sig_bytes);
 
         Ok(public_key.verify(data, &signature).is_ok())
     }
 
     /// Encrypt data using post-quantum encryption
     pub fn encrypt_quantum(&self, data: &[u8]) -> Result<Vec<u8>> {
-        use pqc_kyber::{SessionKeys, Kyber1024};
+        use pqc_kyber::*;
 
         // This would use the recipient's PQ public key
         // For demonstration, we'll use our own
-        let (ciphertext, _session_keys) = Kyber1024::encapsulate(&self.pq_public_key);
+        let public_key_bytes: [u8; KYBER_PUBLICKEYBYTES] = self.pq_public_key.clone()
+            .try_into()
+            .map_err(|_| MSSCSError::Crypto("Invalid PQ public key length".to_string()))?;
+        
+        let mut rng = rand::rngs::OsRng;
+        let (_ciphertext, _shared_secret) = encapsulate(&public_key_bytes, &mut rng)
+            .map_err(|e| MSSCSError::Crypto(format!("Encapsulation failed: {:?}", e)))?;
 
-        // In real implementation, would encrypt data with session key
-        let mut encrypted = ciphertext.to_vec();
+        // In real implementation, would encrypt data with shared secret
+        let mut encrypted = _ciphertext.to_vec();
         encrypted.extend_from_slice(data); // Simplified
 
         Ok(encrypted)

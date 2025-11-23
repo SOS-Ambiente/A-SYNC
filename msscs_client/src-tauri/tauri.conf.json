@@ -54,10 +54,6 @@
       },
       "appimage": {
         "bundleMediaFramework": false
-      },
-      "nsis": {
-        "displayLanguageSelector": true,
-        "allowToChangeInstallationDirectory": true
       }
     },
     "security": {
