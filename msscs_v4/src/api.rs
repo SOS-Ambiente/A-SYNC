@@ -72,6 +72,47 @@ pub struct BlockInfoResponse {
     pub uuid: String,
     pub node_index: u64,
     pub size: usize,
+    pub compressed_size: usize,
+    pub is_encrypted: bool,
+    pub previous_uuid: Option<String>,
+}
+
+/// Request to get file chunks
+#[derive(Debug, Deserialize)]
+pub struct GetFileChunksRequest {
+    pub file_id: String,
+}
+
+/// Response with file chunks
+#[derive(Debug, Serialize)]
+pub struct FileChunksResponse {
+    pub file_id: String,
+    pub chunks: Vec<FileChunkInfo>,
+    pub total_chunks: usize,
+}
+
+/// File chunk information
+#[derive(Debug, Serialize)]
+pub struct FileChunkInfo {
+    pub chunk_id: String,
+    pub chunk_index: u64,
+    pub size: usize,
+    pub compressed_size: usize,
+    pub checksum: String,
+}
+
+/// Request to download a chunk
+#[derive(Debug, Deserialize)]
+pub struct DownloadChunkRequest {
+    pub chunk_id: String,
+}
+
+/// Response with chunk data
+#[derive(Debug, Serialize)]
+pub struct DownloadChunkResponse {
+    pub chunk_id: String,
+    pub data: String, // Base64 encoded
+    pub checksum: String,
 }
 
 /// Create API router
