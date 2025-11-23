@@ -704,6 +704,10 @@ pub fn run() {
             get_metrics,
             get_security_info,
             get_file_details,
+            start_p2p_bridge,
+            add_discovered_peer,
+            get_p2p_network_status,
+            get_p2p_network_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
