@@ -228,9 +228,17 @@ impl P2PBridge {
 
             info!("Requesting block {} from P2P network", uuid);
 
-            // Note: This is a simplified implementation
-            // The full implementation would use the P2PNode's get_block method
-            Ok(None) // Placeholder
+            // Try to get block from connected peers
+            let peers = p2p_node.get_connected_peers().await;
+            for peer_id in peers {
+                if let Ok(Some(block_data)) = p2p_node.get_block_from_peer(&peer_id, &uuid).await {
+                    info!("Retrieved block {} from peer {}", uuid, peer_id);
+                    return Ok(Some(block_data.data));
+                }
+            }
+
+            warn!("Block {} not found on any connected peers", uuid);
+            Ok(None)
         } else {
             Err("P2P node not available".to_string())
         }
