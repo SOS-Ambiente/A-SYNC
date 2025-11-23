@@ -231,11 +231,14 @@ impl P2PBridge {
             // Try to get block from connected peers
             let peers = p2p_node.get_connected_peers().await;
             for peer_id in peers {
-                if let Ok(Some(block_data)) = p2p_node.get_block_from_peer(&peer_id, &uuid).await {
-                    info!("Retrieved block {} from peer {}", uuid, peer_id);
-                    return Ok(Some(block_data.data));
-                }
+                info!("Requesting block {} from peer {}", uuid, peer_id);
+                // Request block from peer (the actual response will come through events)
+                p2p_node.get_block(uuid).await?;
             }
+
+            // For now, we'll return None and let the event system handle the response
+            // In a real implementation, this would wait for the block response
+            Ok(None)
 
             warn!("Block {} not found on any connected peers", uuid);
             Ok(None)
