@@ -173,7 +173,7 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
         config,
         metrics,
         discovery,
-        p2p_bridge: Arc<RwLock<Option<p2p_bridge::P2PBridge>>>,
+        p2p_bridge: Arc::new(RwLock::new(None)),
         cancel_tokens: Arc::new(RwLock::new(HashMap::new())),
     });
 
