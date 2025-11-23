@@ -133,9 +133,11 @@ impl VirtualFileSystem {
             let chunk_data = &processed_data[start..end];
 
             // Create data block with enhanced features
-            let block = DataBlock::new(
+            let block = DataBlock::new_with_index(
                 chunk_data.to_vec(),
                 previous_hash,
+                chunk_index as u64,
+                None, // previous_uuid for VFS compatibility
             )?;
 
             // Add to local storage
