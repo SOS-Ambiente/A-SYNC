@@ -241,27 +241,32 @@ async fn get_block_info_handler(
 ) -> Result<impl IntoResponse> {
     // Check authentication
     check_auth(&state.config, &headers)?;
-    
+
     // Parse UUID
     let uuid = Uuid::parse_str(&uuid_str)
         .map_err(|e| MSSCSError::InvalidData(format!("Invalid UUID: {}", e)))?;
-    
+
     // Get block from node
     let blocks = state.node.local_blocks.read().await;
     let block = blocks.get(&uuid.to_string())
         .ok_or_else(|| MSSCSError::NotFound(format!("Block {} not found", uuid)))?;
-    
+
     let size = bincode::serialize(block)
         .map(|v| v.len())
         .unwrap_or(0);
-    
+
+    let compressed_size = block.get_compressed_data().len();
+
     // Update metrics
     state.metrics.record_request(true);
-    
+
     Ok(Json(BlockInfoResponse {
         uuid: uuid.to_string(),
         node_index: block.node_index,
         size,
+        compressed_size,
+        is_encrypted: block.is_encrypted,
+        previous_uuid: block.previous_uuid.map(|u| u.to_string()),
     }))
 }
 
