@@ -142,35 +142,30 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     
     let p2p_node = match P2PNode::new(p2p_config).await {
         Ok(mut p2p_node) => {
-            let peer_id = p2p_node.peer_id();
-            tracing::info!("P2P Node initialized with Peer ID: {}", peer_id);
-            
-            // Take the event receiver
-            let mut event_rx = p2p_node.take_event_receiver();
-            
-            p2p_node.start().await.map_err(|e| e.to_string())?;
-            
+            let (mut event_rx, _local_blocks) = p2p_node.start().await.map_err(|e| e.to_string())?;
+
             let p2p_node = Arc::new(RwLock::new(p2p_node));
-            
-            // Spawn event handler if we got the receiver
-            if let Some(mut event_rx) = event_rx {
-                let p2p_clone = p2p_node.clone();
-                tokio::spawn(async move {
-                    while let Some(event) = event_rx.recv().await {
-                        use msscs_v4::p2p_network::P2PEvent;
-                        match event {
-                            P2PEvent::PeerConnected { peer_id } => {
-                                tracing::info!("Connected to peer: {}", peer_id);
-                            }
-                            P2PEvent::PeerDisconnected { peer_id } => {
-                                tracing::info!("Disconnected from peer: {}", peer_id);
-                            }
-                            _ => {}
+
+            // Spawn event handler
+            let p2p_clone = p2p_node.clone();
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    use msscs_v4::p2p_network::P2PEvent;
+                    match event {
+                        P2PEvent::PeerConnected(peer_id) => {
+                            tracing::info!("Connected to peer: {}", peer_id);
                         }
+                        P2PEvent::PeerDisconnected(peer_id) => {
+                            tracing::info!("Disconnected from peer: {}", peer_id);
+                        }
+                        P2PEvent::BlockReceived { peer, block } => {
+                            tracing::info!("Received block {} from {}", block.uuid, peer);
+                        }
+                        _ => {}
                     }
-                });
-            }
-            
+                }
+            });
+
             Some(p2p_node)
         }
         Err(e) => {
