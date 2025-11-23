@@ -30,6 +30,7 @@ struct AppStateWrapper {
     config: Arc<Config>,
     metrics: Arc<Metrics>,
     discovery: Arc<RwLock<NetworkDiscovery>>,
+    p2p_bridge: Arc<RwLock<Option<p2p_bridge::P2PBridge>>>,
     cancel_tokens: Arc<RwLock<HashMap<String, Arc<AtomicBool>>>>,
 }
 
