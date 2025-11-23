@@ -124,6 +124,7 @@ impl VirtualFileSystem {
         let total_chunks = (processed_data.len() as f64 / chunk_size as f64).ceil() as usize;
         let mut chunk_ids = Vec::new();
         let mut previous_hash: Option<String> = None;
+        let mut previous_uuid: Option<Uuid> = None;
         let mut bytes_processed = 0u64;
 
         // Process chunks in reverse order for cryptographic chaining
@@ -137,7 +138,7 @@ impl VirtualFileSystem {
                 chunk_data.to_vec(),
                 previous_hash,
                 chunk_index as u64,
-                None, // previous_uuid for VFS compatibility
+                previous_uuid, // Link to previous block in chain
             )?;
 
             // Add to local storage
@@ -151,8 +152,11 @@ impl VirtualFileSystem {
                 node.replicate_block(&block).await?;
             }
 
-            chunk_ids.push(block.uuid.to_string());
+            // Update chain links for next iteration
             previous_hash = Some(block.get_hash());
+            previous_uuid = Some(block.uuid);
+
+            chunk_ids.push(block.uuid.to_string());
 
             bytes_processed += chunk_data.len() as u64;
 
