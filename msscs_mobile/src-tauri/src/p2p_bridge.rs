@@ -238,9 +238,7 @@ impl P2PBridge {
 
             // For now, we'll return None and let the event system handle the response
             // In a real implementation, this would wait for the block response
-            Ok(None)
-
-            warn!("Block {} not found on any connected peers", uuid);
+            warn!("Block {} requested from {} peers", uuid, peers.len());
             Ok(None)
         } else {
             Err("P2P node not available".to_string())
