@@ -19,6 +19,7 @@ use tokio::sync::RwLock;
 
 mod network_discovery;
 mod file_viewer;
+mod p2p_bridge;
 
 use network_discovery::{NetworkDiscovery, DiscoveredNode as NetworkDiscoveredNode};
 
