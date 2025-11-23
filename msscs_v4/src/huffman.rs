@@ -323,3 +323,33 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
 
     Ok(result)
 }
+
+/// HuffmanCompressor class expected by VFS
+pub struct HuffmanCompressor {
+    _private: (),
+}
+
+impl HuffmanCompressor {
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+
+    pub fn compress(&mut self, data: &[u8]) -> Result<Vec<u8>> {
+        compress(data)
+    }
+}
+
+/// HuffmanDecompressor class expected by VFS
+pub struct HuffmanDecompressor {
+    _private: (),
+}
+
+impl HuffmanDecompressor {
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+
+    pub fn decompress(&mut self, data: &[u8]) -> Result<Vec<u8>> {
+        decompress(data)
+    }
+}
