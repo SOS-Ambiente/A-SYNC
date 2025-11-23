@@ -1,6 +1,6 @@
 // P2P Bridge module - Connects mobile discovery to real P2P node
 use crate::network_discovery::{NetworkDiscovery, DiscoveredNode, NetworkStatus};
-use msscs_v4::{P2PNode, P2PConfig, P2PEvent};
+use msscs_v4::{p2p_network::{P2PNode, P2PConfig, P2PEvent}, block::DataBlock};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
