@@ -1,6 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+
+// Compatibility layer for Tauri API versions
+const tauri = {
+  invoke: invoke,
+  listen: listen
+};
 
 export interface FileItem {
   path: string
@@ -24,6 +31,38 @@ export interface UploadProgress {
   eta?: number
 }
 
+// Enhanced progress interface for uploads (matching desktop)
+export interface EnhancedUploadProgress {
+  fileId: string;
+  progress: number; // 0-100
+  bytesUploaded: number;
+  totalBytes: number;
+  speed: number; // bytes per second
+  eta: number; // estimated time remaining in seconds
+  stage: 'uploading' | 'compressing' | 'encrypting' | 'replicating' | 'complete' | 'error';
+  error?: string;
+}
+
+// Enhanced progress interface for downloads (matching desktop)
+export interface EnhancedDownloadProgress {
+  fileId: string;
+  progress: number; // 0-100
+  bytesDownloaded: number;
+  totalBytes: number;
+  speed: number; // bytes per second
+  eta: number; // estimated time remaining in seconds
+  stage: 'downloading' | 'decompressing' | 'verifying' | 'complete' | 'error';
+  chunksFound: number;
+  totalChunks: number;
+  peersConnected: number;
+  error?: string;
+}
+
+// Generate unique file ID
+function generateFileId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
 export const useFilesStore = defineStore('files', () => {
   const files = ref<FileItem[]>([])
   const loading = ref(false)
@@ -32,7 +71,7 @@ export const useFilesStore = defineStore('files', () => {
   const loadFiles = async () => {
     loading.value = true
     try {
-      const fileList = await invoke<FileItem[]>('list_files')
+      const fileList = await tauri.invoke<FileItem[]>('list_files')
       files.value = fileList
     } catch (error) {
       console.error('Failed to load files:', error)
@@ -73,8 +112,7 @@ export const useFilesStore = defineStore('files', () => {
       })
 
       // Listen for progress events
-      const { listen } = await import('@tauri-apps/api/event')
-      const unlisten = await listen<UploadProgress>('upload-progress', (event) => {
+      const unlisten = await tauri.listen<UploadProgress>('upload-progress', (event) => {
         if (event.payload.operationId === operationId) {
           uploadProgress.value.set(operationId, event.payload)
           
@@ -87,9 +125,9 @@ export const useFilesStore = defineStore('files', () => {
         }
       })
 
-      const result = await invoke<{ uuid: string; blocks: number }>('upload_file', { 
-        filePath, 
-        operationId 
+      const result = await tauri.invoke<{ uuid: string; blocks: number }>('upload_file', {
+        filePath,
+        operationId
       })
       
       await loadFiles()
@@ -102,7 +140,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const cancelOperation = async (operationId: string) => {
     try {
-      await invoke('cancel_operation', { operationId })
+      await tauri.invoke('cancel_operation', { operationId })
     } catch (error) {
       console.error('Failed to cancel operation:', error)
     }
@@ -120,8 +158,7 @@ export const useFilesStore = defineStore('files', () => {
       })
 
       // Listen for progress events
-      const { listen } = await import('@tauri-apps/api/event')
-      const unlisten = await listen<UploadProgress>('download-progress', (event) => {
+      const unlisten = await tauri.listen<UploadProgress>('download-progress', (event) => {
         if (event.payload.operationId === operationId) {
           uploadProgress.value.set(operationId, event.payload)
           
@@ -134,7 +171,7 @@ export const useFilesStore = defineStore('files', () => {
         }
       })
 
-      await invoke('download_file', { path, savePath, operationId })
+      await tauri.invoke('download_file', { path, savePath, operationId })
     } catch (error) {
       uploadProgress.value.delete(operationId)
       console.error('Failed to download file:', error)
@@ -144,7 +181,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const previewFile = async (path: string): Promise<string | null> => {
     try {
-      const data = await invoke<string>('preview_file', { path })
+      const data = await tauri.invoke<string>('preview_file', { path })
       return data
     } catch (error) {
       console.error('Failed to preview file:', error)
@@ -154,7 +191,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const openWithNativeApp = async (path: string) => {
     try {
-      await invoke('open_with_system', { path })
+      await tauri.invoke('open_with_system', { path })
     } catch (error) {
       console.error('Failed to open file:', error)
       throw error
@@ -163,7 +200,7 @@ export const useFilesStore = defineStore('files', () => {
 
   const deleteFile = async (path: string) => {
     try {
-      await invoke('delete_file', { path })
+      await tauri.invoke('delete_file', { path })
       await loadFiles()
     } catch (error) {
       console.error('Failed to delete file:', error)
@@ -176,13 +213,75 @@ export const useFilesStore = defineStore('files', () => {
       // Download file to temp location first
       const tempPath = `/sdcard/Download/${path.split('/').pop()}`
       await downloadFile(path, tempPath)
-      
+
       // Share using system share sheet (would need native plugin)
       console.log('Share file:', tempPath)
       return tempPath
     } catch (error) {
       console.error('Failed to share file:', error)
       throw error
+    }
+  }
+
+  // Enhanced upload function matching desktop client
+  const uploadFileEnhanced = async (filePath: string, onProgress?: (progress: EnhancedUploadProgress) => void) => {
+    try {
+      const fileId = generateFileId();
+
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('upload-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as EnhancedUploadProgress);
+          }
+        });
+      }
+
+      // Start upload with enhanced parameters
+      const result = await tauri.invoke('upload_file', {
+        fileId,
+        fileName: filePath.split('/').pop() || filePath,
+        fileSize: 0, // Will be read by backend
+        filePath: filePath,
+        chunkSize: 1024 * 1024, // 1MB chunks (matching backend)
+        compressionLevel: 'high', // Enable Huffman compression
+        replicationFactor: 3, // Replicate to 3 peers
+        encrypt: true // Enable encryption
+      });
+
+      await loadFiles();
+      return { fileId, ...result };
+    } catch (error) {
+      console.error('Upload failed:', error);
+      throw new Error(`Upload failed: ${error}`);
+    }
+  }
+
+  // Enhanced download function matching desktop client
+  const downloadFileEnhanced = async (fileId: string, savePath: string, onProgress?: (progress: EnhancedDownloadProgress) => void) => {
+    try {
+      // Setup progress listener
+      if (onProgress) {
+        const unlisten = await tauri.listen('download-progress', (event) => {
+          if (event.payload.fileId === fileId) {
+            onProgress(event.payload as EnhancedDownloadProgress);
+          }
+        });
+      }
+
+      // Start download
+      const result = await tauri.invoke('download_file', {
+        fileId,
+        outputPath: savePath,
+        decompress: true, // Decompress using Huffman
+        verifyIntegrity: true, // Check checksums
+        preferLocal: true // Use local cache if available
+      });
+
+      return { fileId, ...result };
+    } catch (error) {
+      console.error('Download failed:', error);
+      throw new Error(`Download failed: ${error}`);
     }
   }
 
@@ -204,8 +303,10 @@ export const useFilesStore = defineStore('files', () => {
     uploadProgress,
     loadFiles,
     uploadFile,
+    uploadFileEnhanced,
     pickAndUploadFile,
     downloadFile,
+    downloadFileEnhanced,
     deleteFile,
     previewFile,
     openWithNativeApp,

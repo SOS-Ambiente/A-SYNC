@@ -1,0 +1,46 @@
+{
+  "name": "msscs-workspace",
+  "version": "4.0.0",
+  "description": "MSSCS v4.0 - Multi-State Chain-based Secure Storage",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm run --filter msscs-client dev",
+    "build": "pnpm run --filter msscs-client build",
+    "build:linux": "pnpm run --filter msscs-client build:linux",
+    "build:windows": "pnpm run --filter msscs-client build:windows",
+    "build:all": "pnpm run --filter msscs-client build:all",
+    "build:linux:appimage": "pnpm run --filter msscs-client build:linux:appimage",
+    "build:windows:nsis": "pnpm run --filter msscs-client build:windows:nsis",
+    "build:mobile": "cd msscs_mobile && pnpm build",
+    "build:mobile:android": "cd msscs_mobile && pnpm build:android",
+    "build:mobile:ios": "cd msscs_mobile && pnpm build:ios",
+    "test": "pnpm run --filter msscs-client test",
+    "clean": "pnpm run --filter msscs-client clean && rm -rf target/",
+    "install:all": "pnpm install && cd msscs_client && pnpm install && cd ../msscs_mobile && pnpm install"
+  },
+  "packageManager": "pnpm@8.0.0",
+  "workspaces": [
+    "msscs_client",
+    "msscs_mobile"
+  ],
+  "keywords": [
+    "p2p",
+    "storage",
+    "blockchain",
+    "distributed",
+    "tor-like",
+    "compression",
+    "quantum",
+    "cryptography"
+  ],
+  "author": "MSSCS Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/msscs/msscs-v4"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}

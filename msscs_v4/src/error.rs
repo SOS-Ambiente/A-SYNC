@@ -27,6 +27,15 @@ pub enum MSSCSError {
     
     #[error("Invalid data: {0}")]
     InvalidData(String),
+
+    #[error("File not found: {0}")]
+    FileNotFound(String),
+
+    #[error("Corrupted data: {0}")]
+    CorruptedData(String),
+
+    #[error("Encryption error: {0}")]
+    Encryption(String),
 }
 
 /// Result type alias for MSSCS operations

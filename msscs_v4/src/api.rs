@@ -72,6 +72,47 @@ pub struct BlockInfoResponse {
     pub uuid: String,
     pub node_index: u64,
     pub size: usize,
+    pub compressed_size: usize,
+    pub is_encrypted: bool,
+    pub previous_uuid: Option<String>,
+}
+
+/// Request to get file chunks
+#[derive(Debug, Deserialize)]
+pub struct GetFileChunksRequest {
+    pub file_id: String,
+}
+
+/// Response with file chunks
+#[derive(Debug, Serialize)]
+pub struct FileChunksResponse {
+    pub file_id: String,
+    pub chunks: Vec<FileChunkInfo>,
+    pub total_chunks: usize,
+}
+
+/// File chunk information
+#[derive(Debug, Serialize)]
+pub struct FileChunkInfo {
+    pub chunk_id: String,
+    pub chunk_index: u64,
+    pub size: usize,
+    pub compressed_size: usize,
+    pub checksum: String,
+}
+
+/// Request to download a chunk
+#[derive(Debug, Deserialize)]
+pub struct DownloadChunkRequest {
+    pub chunk_id: String,
+}
+
+/// Response with chunk data
+#[derive(Debug, Serialize)]
+pub struct DownloadChunkResponse {
+    pub chunk_id: String,
+    pub data: String, // Base64 encoded
+    pub checksum: String,
 }
 
 /// Create API router
@@ -80,12 +121,14 @@ pub fn create_router(state: AppState) -> Router {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    
+
     Router::new()
         .route("/files", post(write_file_handler))
         .route("/files", get(list_files_handler))
         .route("/files/:path", get(read_file_handler))
         .route("/files/:path", delete(delete_file_handler))
+        .route("/files/:id/chunks", get(get_file_chunks_handler))
+        .route("/chunks/download", post(download_chunk_handler))
         .route("/blocks/:uuid", get(get_block_info_handler))
         .route("/health", get(health_check_handler))
         .route("/metrics", get(metrics_handler))
@@ -198,27 +241,32 @@ async fn get_block_info_handler(
 ) -> Result<impl IntoResponse> {
     // Check authentication
     check_auth(&state.config, &headers)?;
-    
+
     // Parse UUID
     let uuid = Uuid::parse_str(&uuid_str)
         .map_err(|e| MSSCSError::InvalidData(format!("Invalid UUID: {}", e)))?;
-    
+
     // Get block from node
     let blocks = state.node.local_blocks.read().await;
     let block = blocks.get(&uuid.to_string())
         .ok_or_else(|| MSSCSError::NotFound(format!("Block {} not found", uuid)))?;
-    
+
     let size = bincode::serialize(block)
         .map(|v| v.len())
         .unwrap_or(0);
-    
+
+    let compressed_size = block.get_compressed_data().len();
+
     // Update metrics
     state.metrics.record_request(true);
-    
+
     Ok(Json(BlockInfoResponse {
         uuid: uuid.to_string(),
         node_index: block.node_index,
         size,
+        compressed_size,
+        is_encrypted: block.is_encrypted,
+        previous_uuid: block.previous_uuid.map(|u| u.to_string()),
     }))
 }
 
@@ -264,6 +312,82 @@ fn check_auth(config: &Config, headers: &HeaderMap) -> Result<()> {
     Ok(())
 }
 
+/// Get file chunks handler
+async fn get_file_chunks_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<impl IntoResponse> {
+    // Check authentication
+    check_auth(&state.config, &headers)?;
+
+    // Parse file ID
+    let file_uuid = Uuid::parse_str(&file_id)
+        .map_err(|e| MSSCSError::InvalidData(format!("Invalid file ID: {}", e)))?;
+
+    // Load file metadata from persistence
+    let metadata = state.vfs.read().await.persistence.load_file_metadata(&file_id)?
+        .ok_or_else(|| MSSCSError::NotFound(format!("File {} not found", file_id)))?;
+
+    // Convert chunks to response format
+    let chunks: Vec<FileChunkInfo> = metadata.chunk_ids.iter().enumerate().map(|(index, chunk_id)| {
+        FileChunkInfo {
+            chunk_id: chunk_id.clone(),
+            chunk_index: index as u64,
+            size: 0, // Would be populated from actual block data
+            compressed_size: 0, // Would be populated from actual block data
+            checksum: "".to_string(), // Would be calculated from block data
+        }
+    }).collect();
+
+    // Update metrics
+    state.metrics.record_request(true);
+
+    Ok(Json(FileChunksResponse {
+        file_id,
+        chunks,
+        total_chunks: metadata.chunk_count,
+    }))
+}
+
+/// Download chunk handler
+async fn download_chunk_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DownloadChunkRequest>,
+) -> Result<impl IntoResponse> {
+    // Check authentication
+    check_auth(&state.config, &headers)?;
+
+    // Parse chunk UUID
+    let chunk_uuid = Uuid::parse_str(&req.chunk_id)
+        .map_err(|e| MSSCSError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
+
+    // Get chunk from local storage
+    let blocks = state.node.local_blocks.read().await;
+    let block = blocks.get(&req.chunk_id)
+        .ok_or_else(|| MSSCSError::NotFound(format!("Chunk {} not found", req.chunk_id)))?;
+
+    // Get chunk data
+    let chunk_data = block.get_compressed_data();
+
+    // Calculate checksum
+    let checksum = crate::block::calculate_checksum(chunk_data);
+
+    // Encode to base64
+    use base64::{Engine as _, engine::general_purpose};
+    let encoded = general_purpose::STANDARD.encode(chunk_data);
+
+    // Update metrics
+    state.metrics.record_request(true);
+
+    Ok(Json(DownloadChunkResponse {
+        chunk_id: req.chunk_id,
+        data: encoded,
+        checksum,
+    }))
+}
+
 /// Convert MSSCSError to HTTP response
 impl IntoResponse for MSSCSError {
     fn into_response(self) -> Response {
@@ -273,7 +397,7 @@ impl IntoResponse for MSSCSError {
             MSSCSError::Config(msg) => (StatusCode::UNAUTHORIZED, msg),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
-        
+
         (status, message).into_response()
     }
 }

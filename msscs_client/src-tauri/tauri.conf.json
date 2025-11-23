@@ -36,7 +36,7 @@
     },
     "bundle": {
       "active": true,
-      "targets": "all",
+      "targets": ["appimage", "nsis", "deb"],
       "identifier": "com.msscs.client",
       "icon": [
         "icons/32x32.png",
@@ -44,7 +44,21 @@
         "icons/128x128@2x.png",
         "icons/icon.icns",
         "icons/icon.ico"
-      ]
+      ],
+      "category": "Utility",
+      "shortDescription": "MSSCS Decentralized File Sharing",
+      "longDescription": "Multi-State Chain-based Secure Storage client for decentralized file sharing with P2P networking",
+      "deb": {
+        "depends": ["libgtk-3-0", "libwebkit2gtk-4.0-37"],
+        "desktopTemplate": "msscs-client.desktop"
+      },
+      "appimage": {
+        "bundleMediaFramework": false
+      },
+      "nsis": {
+        "displayLanguageSelector": true,
+        "allowToChangeInstallationDirectory": true
+      }
     },
     "security": {
       "csp": null

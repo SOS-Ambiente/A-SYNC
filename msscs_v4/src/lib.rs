@@ -5,13 +5,17 @@ pub mod error;
 pub mod config;
 pub mod block;
 pub mod huffman;
+pub mod identity;
 pub mod persistence;
 pub mod network;
+pub mod p2p_network;
 pub mod vfs;
 pub mod api;
 pub mod metrics;
 
 // Re-export commonly used types
-pub use block::DataBlock;
+pub use block::{DataBlock, FileMetadata, calculate_checksum};
 pub use error::{MSSCSError, Result};
 pub use config::Config;
+pub use identity::{QuantumIdentity, IdentityManager, ReputationTier};
+pub use p2p_network::{P2PNode, P2PConfig, P2PEvent};
