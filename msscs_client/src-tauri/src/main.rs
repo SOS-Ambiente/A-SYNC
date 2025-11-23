@@ -133,15 +133,11 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     tracing::info!("Initializing P2P networking with libp2p...");
     
     let p2p_config = P2PConfig {
-        listen_addresses: vec![
-            "/ip4/0.0.0.0/tcp/0".to_string(),
-            "/ip6/::/tcp/0".to_string(),
-        ],
+        listen_port: 0, // Random port
         bootstrap_peers: Vec::new(), // Empty for now - will use mDNS for local discovery
         max_peers: 50,
-        enable_mdns: true,  // Enable local network peer discovery
-        enable_relay: true,
         replication_factor: config.replication_factor,
+        enable_mdns: true,  // Enable local network peer discovery
     };
     
     let p2p_node = match P2PNode::new(p2p_config).await {
