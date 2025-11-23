@@ -1,0 +1,129 @@
+╔════════════════════════════════════════════════════════════════╗
+║  🚀 MSSCS - QUICK START GUIDE                                 ║
+╚════════════════════════════════════════════════════════════════╝
+
+✅ ALL FIXES APPLIED - READY TO USE!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🌐 WEB CLIENT (Browser-based)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WINDOWS:
+  .\msscs_web\start-web.ps1
+
+LINUX/MAC:
+  bash msscs_web/start-web.sh
+
+OR MANUALLY:
+  cd msscs_web
+  npm start
+
+THEN:
+  1. Open http://localhost:8000 in your browser
+  2. Wait 5-10 seconds for P2P initialization
+  3. Check browser console (F12) for Peer ID
+  4. Status will change: "offline" → "online"
+  5. Share your Peer ID to connect with others
+
+⚠️  IMPORTANT:
+  • server.js is a STATIC FILE SERVER (serves HTML/JS/CSS)
+  • P2P network initializes IN THE BROWSER (app.js)
+  • "Node Status: offline" is NORMAL until browser loads
+  • This is how web apps work!
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🖥️  TAURI CLIENT (Desktop App)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+DEVELOPMENT:
+  cd msscs_client
+  npm run tauri:dev
+
+BUILD:
+  cd msscs_client
+  npm run tauri:build
+
+The Tauri app will:
+  ✓ Initialize Rust backend (P2P node, VFS, storage)
+  ✓ Start Vue.js frontend
+  ✓ Connect PeerJS bridge (for web peer compatibility)
+  ✓ Show status in UI
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔍 VERIFY IT'S WORKING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WEB CLIENT:
+  ✓ Server starts: "MSSCS Web - Static File Server"
+  ✓ Browser opens: http://localhost:8000
+  ✓ Console shows: "✅ MSSCS Web Successfully Initialized"
+  ✓ Peer ID appears in UI (top right)
+  ✓ Status: "Online - Discovering peers..."
+  ✓ Can upload files
+  ✓ Can connect to peers by entering Peer ID
+
+TAURI CLIENT:
+  ✓ Terminal shows: "✅ MSSCS Tauri Node Successfully Started"
+  ✓ Window opens with Vue.js UI
+  ✓ Status: "online" (top bar)
+  ✓ Can upload files
+  ✓ Can see connected peers
+  ✓ PeerJS bridge active
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🐛 TROUBLESHOOTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+WEB CLIENT SHOWS "OFFLINE":
+  1. Did you open the browser? (server.js alone won't connect)
+  2. Check browser console (F12) for errors
+  3. Wait 10 seconds for P2P initialization
+  4. Try refreshing the page
+  5. Check if PeerJS CDN is accessible
+
+TAURI CLIENT WON'T START:
+  1. Check if Rust is installed: rustc --version
+  2. Check if Node.js is installed: node --version
+  3. Install dependencies: npm install
+  4. Check terminal for error messages
+  5. Try: npm run tauri:dev
+
+CAN'T CONNECT TO PEERS:
+  1. Both peers must be online
+  2. Check Peer ID is correct (copy/paste)
+  3. Check firewall settings
+  4. Try using TURN relay (automatic)
+  5. Check browser console for connection errors
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📊 WHAT WAS FIXED
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ Clarified server.js is static-only (not P2P)
+✅ Added P2P initialization retry logic
+✅ Improved error handling and logging
+✅ Enhanced status indicators
+✅ Created startup scripts (Windows/Linux)
+✅ Fixed Vue store reactivity issues
+✅ Better Tauri IPC error handling
+✅ Improved connection statistics
+✅ Added offline mode support
+✅ Enhanced debugging output
+
+See FIXES_SUMMARY.txt for detailed information.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🎉 YOU'RE READY!
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Start the web client or Tauri app and enjoy decentralized storage!
+
+Questions? Check:
+  • Browser console (F12) for detailed logs
+  • Terminal output for Rust backend logs
+  • FIXES_SUMMARY.txt for architecture details

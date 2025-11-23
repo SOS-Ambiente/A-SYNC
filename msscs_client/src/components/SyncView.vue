@@ -13,83 +13,17 @@
       </button>
     </div>
 
-    <div class="sync-stats">
-      <div class="stat-card glass">
-        <div class="stat-icon-wrapper blocks">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ nodeStore.blockCount }}</div>
-          <div class="stat-label">Total Blocks</div>
-        </div>
-      </div>
+    <NetworkStats
+      :block-count="nodeStore.blockCount"
+      :peer-count="nodeStore.peerCount"
+      :storage-used="nodeStore.storageUsed"
+      :uptime="uptime"
+    />
 
-      <div class="stat-card glass">
-        <div class="stat-icon-wrapper peers">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/>
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ nodeStore.peerCount }}</div>
-          <div class="stat-label">Connected Peers</div>
-        </div>
-      </div>
-
-      <div class="stat-card glass">
-        <div class="stat-icon-wrapper synced">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ syncedFiles }}</div>
-          <div class="stat-label">Synced Files</div>
-        </div>
-      </div>
-
-      <div class="stat-card glass">
-        <div class="stat-icon-wrapper uptime">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-        </div>
-        <div class="stat-info">
-          <div class="stat-value">{{ uptime }}</div>
-          <div class="stat-label">Uptime</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="sync-activity glass">
-      <h2 class="section-title">Recent Activity</h2>
-      <div class="activity-list">
-        <div v-for="activity in activities" :key="activity.id" class="activity-item">
-          <div class="activity-icon" :class="activity.type">
-            <svg v-if="activity.type === 'upload'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
-            </svg>
-            <svg v-else-if="activity.type === 'download'" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-            </svg>
-            <svg v-else width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-            </svg>
-          </div>
-          <div class="activity-info">
-            <div class="activity-title">{{ activity.title }}</div>
-            <div class="activity-time">{{ activity.time }}</div>
-          </div>
-          <div class="activity-status" :class="activity.status">
-            {{ activity.status }}
-          </div>
-        </div>
-      </div>
-    </div>
+    <ActivityFeed
+      :activities="activities"
+      @refresh="refresh"
+    />
   </div>
 </template>
 
@@ -97,11 +31,14 @@
 import { ref, computed } from 'vue'
 import { useNodeStore } from '../stores/nodeStore'
 import { useFilesStore } from '../stores/filesStore'
+import NetworkStats from './NetworkStats.vue'
+import ActivityFeed from './ActivityFeed.vue'
+import type { Activity } from './ActivityFeed.vue'
 
 const nodeStore = useNodeStore()
 const filesStore = useFilesStore()
 
-const activities = ref([
+const activities = ref<Activity[]>([
   { id: 1, type: 'upload', title: 'document.pdf uploaded', time: '2 minutes ago', status: 'completed' },
   { id: 2, type: 'sync', title: 'Synced with peer 192.168.1.100', time: '5 minutes ago', status: 'completed' },
   { id: 3, type: 'download', title: 'image.png downloaded', time: '10 minutes ago', status: 'completed' },

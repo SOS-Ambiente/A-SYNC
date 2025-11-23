@@ -22,7 +22,8 @@
     "vue": "^3.4.0",
     "@tauri-apps/api": "^1.5.0",
     "pinia": "^2.1.7",
-    "vue-router": "^4.2.5"
+    "vue-router": "^4.2.5",
+    "peerjs": "^1.5.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.0",

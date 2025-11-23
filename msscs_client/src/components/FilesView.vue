@@ -3,23 +3,42 @@
     <div class="view-header">
       <div class="header-content">
         <h1 class="view-title gradient-text">Files</h1>
-        <p class="view-subtitle">{{ filesStore.files.length }} files • {{ formatBytes(totalSize) }}</p>
+        <p class="view-subtitle">
+          {{ filteredFiles.length }} items • {{ formatBytes(totalSize) }}
+          <span v-if="filesStore.selectedFiles.size > 0" class="selection-info">
+            • {{ filesStore.selectedFiles.size }} selected
+          </span>
+        </p>
       </div>
-      <div class="header-actions">
-        <button class="btn-primary" @click="selectAndUpload">
+      <div class="header-actions" v-if="filesStore.selectedFiles.size > 0">
+        <button class="btn-secondary" @click="filesStore.clearSelection()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
           </svg>
-          <span>Upload</span>
+          <span>Clear</span>
         </button>
-        <button class="btn-secondary" @click="filesStore.loadFiles()">
+        <button class="btn-secondary danger" @click="handleDeleteSelected">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          <span>Refresh</span>
+          <span>Delete ({{ filesStore.selectedFiles.size }})</span>
         </button>
       </div>
     </div>
+
+    <FileToolbar
+      :current-path="filesStore.currentPath"
+      :search-query="filesStore.searchQuery"
+      :view-mode="filesStore.viewMode"
+      @back="navigateBack"
+      @navigate="navigateTo"
+      @search="(q) => filesStore.searchQuery = q"
+      @view-mode="(m) => filesStore.viewMode = m"
+      @new-folder="showFolderDialog = true"
+      @upload="selectAndUpload"
+    />
 
     <div class="files-container">
       <div v-if="filesStore.loading" class="loading-state">
@@ -47,111 +66,57 @@
         </button>
       </div>
 
-      <div v-else class="files-grid">
-        <div v-for="file in filesStore.files" :key="file.path" class="file-card glass">
-          <div class="file-icon-wrapper">
-            <div class="file-icon" v-html="getFileIconSVG(file.path)"></div>
-            <div v-if="file.synced" class="sync-badge">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <polyline points="20 6 9 17 4 12"/>
-              </svg>
-            </div>
-          </div>
-          <div class="file-info">
-            <div class="file-name" :title="file.path">{{ file.path }}</div>
-            <div class="file-meta">
-              <span class="file-size">{{ formatBytes(file.size) }}</span>
-              <span class="meta-dot">•</span>
-              <span class="file-blocks">{{ file.blocks }} blocks</span>
-              <span class="file-type-badge">{{ getFileExtension(file.path) }}</span>
-            </div>
-          </div>
-          <div class="file-actions">
-            <button v-if="canPreview(file.path)" class="action-btn" @click="previewFile(file)" title="Preview">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </button>
-            <button class="action-btn" @click="openFile(file)" title="Open">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/>
-              </svg>
-            </button>
-            <button class="action-btn" @click="downloadFile(file)" title="Download">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-              </svg>
-            </button>
-            <button class="action-btn danger" @click="deleteFile(file)" title="Delete">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-              </svg>
-            </button>
-          </div>
-        </div>
+      <div v-else :class="filesStore.viewMode === 'grid' ? 'files-grid' : 'files-list'">
+        <FileCard
+          v-for="file in filteredFiles"
+          :key="file.path"
+          :file="file"
+          :is-selected="filesStore.selectedFiles.has(file.path)"
+          @click="handleFileClick(file, $event)"
+          @dblclick="handleFileDoubleClick(file)"
+          @contextmenu="handleContextMenu(file, $event)"
+        >
+          <template #actions>
+            <FileActions 
+              :file="file"
+              @preview="previewFile"
+              @open="openFile"
+              @download="downloadFile"
+              @delete="deleteFile"
+            />
+          </template>
+        </FileCard>
       </div>
     </div>
 
-    <!-- Preview Modal -->
-    <div v-if="previewData" class="preview-overlay" @click="closePreview">
-      <div class="preview-modal" @click.stop>
-        <div class="preview-header">
-          <h3>{{ previewData.name }}</h3>
-          <button class="close-btn" @click="closePreview">✕</button>
-        </div>
-        <div class="preview-content">
-          <img v-if="previewData.type === 'image'" :src="previewData.data" alt="Preview" />
-          <video v-else-if="previewData.type === 'video'" :src="previewData.data" controls />
-          <pre v-else-if="previewData.type === 'text'">{{ previewData.data }}</pre>
-          <div v-else class="no-preview">
-            <span>📄</span>
-            <p>No preview available</p>
-            <button class="btn-primary" @click="openFile(previewData.file)">Open with default app</button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <FolderDialog
+      :visible="showFolderDialog"
+      title="Create New Folder"
+      @close="showFolderDialog = false"
+      @submit="handleCreateFolder"
+    />
 
-    <!-- Upload/Download Progress -->
-    <div v-if="filesStore.uploadProgress.size > 0 || filesStore.downloadProgress.size > 0" class="upload-overlay">
-      <div class="upload-card">
-        <h3>File Operations</h3>
-        
-        <!-- Upload Progress -->
-        <div v-for="[path, data] in filesStore.uploadProgress" :key="'up-' + path" class="upload-item">
-          <div class="upload-header">
-            <span class="upload-icon">📤</span>
-            <span class="upload-name">{{ getFileName(path) }}</span>
-          </div>
-          <div class="upload-bar">
-            <div class="upload-fill" :style="{ width: data.progress + '%' }"></div>
-          </div>
-          <div class="upload-info">
-            <span class="upload-percent">{{ data.progress }}%</span>
-            <span v-if="data.speed" class="upload-speed">{{ formatSpeed(data.speed) }}</span>
-            <span v-if="data.eta" class="upload-eta">{{ formatTime(data.eta) }}</span>
-          </div>
-        </div>
-        
-        <!-- Download Progress -->
-        <div v-for="[path, data] in filesStore.downloadProgress" :key="'down-' + path" class="upload-item">
-          <div class="upload-header">
-            <span class="upload-icon">📥</span>
-            <span class="upload-name">{{ getFileName(path) }}</span>
-          </div>
-          <div class="upload-bar">
-            <div class="upload-fill download" :style="{ width: data.progress + '%' }"></div>
-          </div>
-          <div class="upload-info">
-            <span class="upload-percent">{{ data.progress }}%</span>
-            <span v-if="data.speed" class="upload-speed">{{ formatSpeed(data.speed) }}</span>
-            <span v-if="data.eta" class="upload-eta">{{ formatTime(data.eta) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <ContextMenu
+      :visible="contextMenu.visible"
+      :position="{ x: contextMenu.x, y: contextMenu.y }"
+      :items="contextMenuItems"
+      @close="contextMenu.visible = false"
+      @select="handleContextMenuAction"
+    />
+
+    <FilePreview
+      :visible="!!previewData"
+      :file="previewData?.file || null"
+      :data="previewData?.data || null"
+      :type="previewData?.type || 'unknown'"
+      @close="closePreview"
+      @open="openFile"
+    />
+
+    <UploadProgress
+      :upload-progress="filesStore.uploadProgress"
+      :download-progress="filesStore.downloadProgress"
+    />
   </div>
 </template>
 
@@ -161,14 +126,164 @@ import { useFilesStore } from '../stores/filesStore'
 import { useNodeStore } from '../stores/nodeStore'
 import { open, save } from '@tauri-apps/api/dialog'
 import type { FileItem } from '../stores/filesStore'
+import FileToolbar from './FileToolbar.vue'
+import FileCard from './FileCard.vue'
+import FolderDialog from './FolderDialog.vue'
+import ContextMenu from './ContextMenu.vue'
+import LoadingState from './LoadingState.vue'
+import EmptyState from './EmptyState.vue'
+import FileActions from './FileActions.vue'
+import FilePreview from './FilePreview.vue'
+import UploadProgress from './UploadProgress.vue'
+import type { MenuItem } from './ContextMenu.vue'
 
 const filesStore = useFilesStore()
 const nodeStore = useNodeStore()
 const previewData = ref<{ name: string; type: string; data: string; file: FileItem } | null>(null)
+const showFolderDialog = ref(false)
+const contextMenu = ref({ visible: false, x: 0, y: 0, file: null as FileItem | null })
+const contextMenuItems = computed<MenuItem[]>(() => [
+  {
+    id: 'open',
+    label: 'Open',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3"/></svg>',
+    shortcut: 'Enter'
+  },
+  {
+    id: 'download',
+    label: 'Download',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+    shortcut: 'Ctrl+D'
+  },
+  {
+    id: 'rename',
+    label: 'Rename',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    shortcut: 'F2'
+  },
+  {
+    id: 'share',
+    label: 'Share',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>'
+  },
+  {
+    id: 'delete',
+    label: 'Delete',
+    icon: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+    shortcut: 'Del',
+    danger: true
+  }
+])
+
+const filteredFiles = computed(() => {
+  let files = filesStore.files.filter(f => {
+    if (filesStore.currentPath === '/') return !f.parentPath || f.parentPath === '/'
+    return f.parentPath === filesStore.currentPath
+  })
+
+  if (filesStore.searchQuery) {
+    const query = filesStore.searchQuery.toLowerCase()
+    files = files.filter(f => f.path.toLowerCase().includes(query))
+  }
+
+  return files.sort((a, b) => {
+    if (a.isFolder && !b.isFolder) return -1
+    if (!a.isFolder && b.isFolder) return 1
+    
+    const aVal = filesStore.sortBy === 'name' ? a.path : filesStore.sortBy === 'size' ? a.size : a.modifiedAt || 0
+    const bVal = filesStore.sortBy === 'name' ? b.path : filesStore.sortBy === 'size' ? b.size : b.modifiedAt || 0
+    
+    const comparison = aVal > bVal ? 1 : -1
+    return filesStore.sortOrder === 'asc' ? comparison : -comparison
+  })
+})
 
 const totalSize = computed(() => {
   return filesStore.files.reduce((sum, file) => sum + file.size, 0)
 })
+
+const navigateBack = () => {
+  const parts = filesStore.currentPath.split('/').filter(Boolean)
+  parts.pop()
+  filesStore.currentPath = '/' + parts.join('/')
+}
+
+const navigateTo = (path: string) => {
+  filesStore.currentPath = path
+}
+
+const handleFileClick = (file: FileItem, event: MouseEvent) => {
+  if (event.ctrlKey || event.metaKey) {
+    filesStore.toggleFileSelection(file.path)
+  } else if (event.shiftKey) {
+    // TODO: Implement range selection
+    filesStore.toggleFileSelection(file.path)
+  } else {
+    filesStore.clearSelection()
+    filesStore.toggleFileSelection(file.path)
+  }
+}
+
+const handleFileDoubleClick = (file: FileItem) => {
+  if (file.isFolder) {
+    filesStore.currentPath = file.path
+  } else {
+    openFile(file)
+  }
+}
+
+const handleContextMenu = (file: FileItem, event: MouseEvent) => {
+  contextMenu.value = {
+    visible: true,
+    x: event.clientX,
+    y: event.clientY,
+    file
+  }
+}
+
+const handleContextMenuAction = (actionId: string) => {
+  const file = contextMenu.value.file
+  if (!file) return
+
+  switch (actionId) {
+    case 'open':
+      openFile(file)
+      break
+    case 'download':
+      downloadFile(file)
+      break
+    case 'rename':
+      // TODO: Implement rename
+      break
+    case 'share':
+      // TODO: Implement share
+      break
+    case 'delete':
+      deleteFile(file)
+      break
+  }
+  
+  contextMenu.value.visible = false
+}
+
+const handleCreateFolder = async (name: string) => {
+  try {
+    const folderPath = filesStore.currentPath === '/' 
+      ? `/${name}` 
+      : `${filesStore.currentPath}/${name}`
+    await filesStore.createFolder(folderPath)
+    alert('Folder created successfully!')
+  } catch (error) {
+    console.error('Failed to create folder:', error)
+    alert(`Failed to create folder: ${error}`)
+  }
+}
+
+const handleDeleteSelected = async () => {
+  if (confirm(`Delete ${filesStore.selectedFiles.size} items?`)) {
+    await filesStore.deleteSelected()
+  }
+}
 
 const selectAndUpload = async () => {
   try {
@@ -216,63 +331,6 @@ const formatBytes = (bytes: number): string => {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-}
-
-const formatSpeed = (blocksPerSec: number): string => {
-  return `${blocksPerSec.toFixed(1)} blocks/s`
-}
-
-const formatTime = (seconds: number): string => {
-  if (seconds < 60) return `${Math.round(seconds)}s`
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.round(seconds % 60)
-  return `${mins}m ${secs}s`
-}
-
-const getFileName = (path: string): string => {
-  return path.split('/').pop() || path.split('\\').pop() || path
-}
-
-const getFileExtension = (path: string): string => {
-  const ext = path.split('.').pop()?.toUpperCase()
-  return ext || 'FILE'
-}
-
-const getFileIconSVG = (path: string): string => {
-  const ext = path.split('.').pop()?.toLowerCase()
-  
-  // Image files
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext || '')) {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>'
-  }
-  // Video files
-  if (['mp4', 'avi', 'mkv', 'mov', 'webm'].includes(ext || '')) {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'
-  }
-  // Audio files
-  if (['mp3', 'wav', 'flac', 'ogg'].includes(ext || '')) {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>'
-  }
-  // PDF
-  if (ext === 'pdf') {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>'
-  }
-  // Code files
-  if (['js', 'ts', 'py', 'rs', 'java', 'cpp', 'c', 'go', 'rb'].includes(ext || '')) {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>'
-  }
-  // Archive files
-  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext || '')) {
-    return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>'
-  }
-  // Default file icon
-  return '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>'
-}
-
-const canPreview = (path: string): boolean => {
-  const ext = path.split('.').pop()?.toLowerCase()
-  const previewable = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'txt', 'md', 'json', 'mp4', 'webm']
-  return previewable.includes(ext || '')
 }
 
 const previewFile = async (file: FileItem) => {
@@ -513,129 +571,29 @@ watch(() => nodeStore.status, (newStatus) => {
   animation: fadeIn 0.5s ease-out 0.1s both;
 }
 
-.file-card {
-  position: relative;
+.files-list {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-lg);
-  border-radius: var(--radius-lg);
-  transition: all var(--transition-fast);
-  cursor: pointer;
-  overflow: hidden;
-  /* Performance optimization */
-  will-change: transform;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  contain: layout style paint;
-}
-
-.file-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--gradient-primary);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-  pointer-events: none;
-}
-
-.file-card:hover {
-  transform: translateY(-4px) translateZ(0);
-  box-shadow: var(--shadow-lg);
-}
-
-.file-card:hover::before {
-  opacity: 0.03;
-}
-
-.file-card:active {
-  transform: translateY(-2px) translateZ(0);
-  transition: transform 50ms;
-}
-
-.file-icon-wrapper {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.file-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: var(--radius-md);
-  color: var(--color-accent-primary);
-  transition: all var(--transition-base);
-}
-
-.file-card:hover .file-icon {
-  background: rgba(0, 255, 136, 0.1);
-  transform: scale(1.05);
-}
-
-.file-info {
-  flex: 1;
-  min-width: 0;
-  position: relative;
-  z-index: 1;
-}
-
-.file-name {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 6px;
-  transition: color var(--transition-fast);
-}
-
-.file-card:hover .file-name {
-  color: var(--color-accent-primary);
-}
-
-.file-meta {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  font-size: 12px;
-  color: var(--color-text-tertiary);
-  font-weight: 500;
-}
-
-.meta-dot {
-  opacity: 0.5;
-}
-
-.file-type-badge {
-  padding: 2px 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: var(--radius-sm);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--color-accent-secondary);
-}
-
-.file-actions {
-  display: flex;
+  flex-direction: column;
   gap: var(--spacing-xs);
-  position: relative;
-  z-index: 1;
-  opacity: 0;
-  transform: translateX(-10px);
-  transition: all var(--transition-base);
+  animation: fadeIn 0.5s ease-out 0.1s both;
 }
 
-.file-card:hover .file-actions {
-  opacity: 1;
-  transform: translateX(0);
+.selection-info {
+  color: var(--color-accent-primary);
+  font-weight: 600;
 }
+
+.btn-secondary.danger {
+  border-color: var(--color-accent-danger);
+  color: var(--color-accent-danger);
+}
+
+.btn-secondary.danger:hover {
+  background: rgba(255, 51, 102, 0.15);
+  border-color: var(--color-accent-danger);
+}
+
+
 
 .action-btn {
   width: 36px;

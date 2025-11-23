@@ -1,13 +1,14 @@
+// IndexedDB Storage Manager for MSSCS Web
 export class StorageManager {
     constructor() {
+        this.dbName = 'msscs-storage';
+        this.dbVersion = 1;
         this.db = null;
-        this.dbName = 'msscs-web';
-        this.version = 1;
     }
 
     async init() {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(this.dbName, this.version);
+            const request = indexedDB.open(this.dbName, this.dbVersion);
 
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
@@ -22,7 +23,6 @@ export class StorageManager {
                 if (!db.objectStoreNames.contains('blocks')) {
                     db.createObjectStore('blocks', { keyPath: 'id' });
                 }
-
                 if (!db.objectStoreNames.contains('files')) {
                     db.createObjectStore('files', { keyPath: 'id' });
                 }
@@ -85,17 +85,6 @@ export class StorageManager {
         });
     }
 
-    async getAllFiles() {
-        return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['files'], 'readonly');
-            const store = transaction.objectStore('files');
-            const request = store.getAll();
-
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-    }
-
     async deleteFile(fileId) {
         return new Promise((resolve, reject) => {
             const transaction = this.db.transaction(['files'], 'readwrite');
@@ -107,19 +96,51 @@ export class StorageManager {
         });
     }
 
+    async getAllFiles() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['files'], 'readonly');
+            const store = transaction.objectStore('files');
+            const request = store.getAll();
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getAllBlocks() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['blocks'], 'readonly');
+            const store = transaction.objectStore('blocks');
+            const request = store.getAll();
+
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async getStorageSize() {
+        const blocks = await this.getAllBlocks();
+        return blocks.reduce((sum, block) => {
+            const size = block.data ? block.data.byteLength || block.data.length : 0;
+            return sum + size;
+        }, 0);
+    }
+
     async clear() {
-        const transaction = this.db.transaction(['blocks', 'files'], 'readwrite');
-        await Promise.all([
-            new Promise((resolve, reject) => {
-                const request = transaction.objectStore('blocks').clear();
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-            }),
-            new Promise((resolve, reject) => {
-                const request = transaction.objectStore('files').clear();
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-            })
+        return Promise.all([
+            this.clearStore('blocks'),
+            this.clearStore('files')
         ]);
+    }
+
+    async clearStore(storeName) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction([storeName], 'readwrite');
+            const store = transaction.objectStore(storeName);
+            const request = store.clear();
+
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
     }
 }

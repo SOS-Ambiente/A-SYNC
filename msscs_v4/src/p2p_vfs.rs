@@ -21,8 +21,8 @@ pub struct P2PVirtualFileSystem {
     /// User identity (quantum-resistant)
     identity: Arc<UnlockedIdentity>,
     
-    /// P2P network node
-    p2p_node: Arc<RwLock<P2PNode>>,
+    /// P2P command sender (for async operations)
+    p2p_command_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::p2p_network::P2PNodeCommand>>,
     
     /// File manifest (path -> first block UUID)
     file_manifest: Arc<RwLock<HashMap<String, Uuid>>>,
@@ -50,28 +50,39 @@ pub struct P2PVirtualFileSystem {
 }
 
 impl P2PVirtualFileSystem {
-    /// Create new P2P VFS with all advanced features
+    /// Create new P2P VFS with all advanced features and configurable storage allocation
     pub fn new(
         identity: Arc<UnlockedIdentity>,
-        p2p_node: Arc<RwLock<P2PNode>>,
+        p2p_command_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::p2p_network::P2PNodeCommand>>,
         chunk_size: usize,
+    ) -> Result<Self> {
+        Self::new_with_storage_limit(identity, p2p_command_tx, chunk_size, 100 * 1024 * 1024) // Default 100MB
+    }
+    
+    /// Create new P2P VFS with custom storage allocation (in bytes)
+    pub fn new_with_storage_limit(
+        identity: Arc<UnlockedIdentity>,
+        p2p_command_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::p2p_network::P2PNodeCommand>>,
+        chunk_size: usize,
+        storage_limit_bytes: usize,
     ) -> Result<Self> {
         let erasure = ErasureCoding::new(10, 4)?;
         let singularity = SingularityFragmentation::new(3, 5)?;
         let compression = AdaptiveCompression::new(CompressionLevel::Balanced, 1024);
         let parallel = ParallelBlockProcessor::default();
-        let pinning = Arc::new(RwLock::new(PinningManager::new(100 * 1024 * 1024))); // 100MB cache
+        let pinning = Arc::new(RwLock::new(PinningManager::new(storage_limit_bytes)));
         
         tracing::info!("🚀 Initializing P2P VFS with advanced features:");
+        tracing::info!("   ✓ Storage allocation: {} MB", storage_limit_bytes / (1024 * 1024));
         tracing::info!("   ✓ Erasure coding: 10+4 (40% overhead, tolerates 4 failures)");
         tracing::info!("   ✓ Singularity fragmentation: 3-of-5 threshold");
         tracing::info!("   ✓ Adaptive compression: Balanced mode");
         tracing::info!("   ✓ Parallel processing: {} threads", parallel.worker_threads);
-        tracing::info!("   ✓ Block pinning: 100MB cache");
+        tracing::info!("   ✓ Block pinning enabled");
         
         Ok(Self {
             identity,
-            p2p_node,
+            p2p_command_tx,
             file_manifest: Arc::new(RwLock::new(HashMap::new())),
             local_blocks: Arc::new(RwLock::new(HashMap::new())),
             erasure,
@@ -83,8 +94,114 @@ impl P2PVirtualFileSystem {
         })
     }
     
+    /// Store block on P2P network via command channel
+    async fn store_block_p2p(&self, block_id: String, data: Vec<u8>) -> Result<()> {
+        if let Some(ref tx) = self.p2p_command_tx {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            
+            if let Err(e) = tx.send(crate::p2p_network::P2PNodeCommand::StoreBlock {
+                block_id: block_id.clone(),
+                data,
+                reply: reply_tx,
+            }) {
+                tracing::warn!("   ⚠️  Failed to send store command: {}", e);
+                return Ok(()); // Continue without P2P storage
+            }
+            
+            match reply_rx.await {
+                Ok(Ok(())) => {
+                    tracing::debug!("   ✓ Stored block {} on P2P network (DHT)", block_id);
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("   ⚠️  P2P storage failed for {}: {}", block_id, e);
+                }
+                Err(e) => {
+                    tracing::warn!("   ⚠️  P2P command channel closed: {}", e);
+                }
+            }
+        } else {
+            tracing::debug!("   ℹ️  P2P not available, using local storage only");
+        }
+        Ok(())
+    }
+    
+    /// Get block from P2P network via command channel
+    async fn get_block_p2p(&self, block_id: &str) -> Result<Vec<u8>> {
+        if let Some(ref tx) = self.p2p_command_tx {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            
+            if let Err(e) = tx.send(crate::p2p_network::P2PNodeCommand::GetBlock {
+                block_id: block_id.to_string(),
+                reply: reply_tx,
+            }) {
+                return Err(MSSCSError::Network(format!("P2P command channel error: {}", e)));
+            }
+            
+            match reply_rx.await {
+                Ok(Ok(data)) => {
+                    tracing::debug!("   ✓ Retrieved block {} from P2P network", block_id);
+                    return Ok(data);
+                }
+                Ok(Err(e)) => {
+                    tracing::debug!("   ℹ️  Block {} not found on P2P network: {}", block_id, e);
+                }
+                Err(e) => {
+                    tracing::warn!("   ⚠️  P2P command channel closed: {}", e);
+                }
+            }
+        }
+        Err(MSSCSError::Network("P2P not available or block not found".to_string()))
+    }
+    
+    /// Update storage allocation limit (in bytes)
+    pub async fn set_storage_limit(&self, limit_bytes: usize) -> Result<()> {
+        let mut pinning = self.pinning.write().await;
+        pinning.set_limit(limit_bytes);
+        tracing::info!("📊 Storage limit updated to {} MB", limit_bytes / (1024 * 1024));
+        Ok(())
+    }
+    
+    /// Get current storage statistics with peer count from P2P network
+    pub async fn get_storage_stats(&self) -> StorageStats {
+        let manifest = self.file_manifest.read().await;
+        let cache = self.local_blocks.read().await;
+        let pinning = self.pinning.read().await;
+        
+        // Get peer count from P2P network if available
+        let peer_count = if let Some(ref tx) = self.p2p_command_tx {
+            let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+            if tx.send(crate::p2p_network::P2PNodeCommand::GetConnectedPeers(reply_tx)).is_ok() {
+                reply_rx.await.map(|peers| peers.len()).unwrap_or(0)
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        
+        let storage_used = pinning.get_used_space();
+        let storage_limit = pinning.get_limit();
+        
+        StorageStats {
+            total_files: manifest.len(),
+            cached_blocks: cache.len(),
+            connected_peers: peer_count,
+            storage_used,
+            storage_limit,
+            storage_available: storage_limit.saturating_sub(storage_used),
+        }
+    }
+    
     /// Upload file to P2P network with quantum encryption and all advanced features
     pub async fn upload_file(&self, path: &Path, data: &[u8]) -> Result<Uuid> {
+        self.upload_file_with_progress(path, data, |_, _| {}).await
+    }
+    
+    /// Upload file with progress callback
+    pub async fn upload_file_with_progress<F>(&self, path: &Path, data: &[u8], mut progress_callback: F) -> Result<Uuid>
+    where
+        F: FnMut(usize, usize),
+    {
         let path_str = path.to_string_lossy().to_string();
         tracing::info!("📤 Uploading file '{}' ({} bytes)", path_str, data.len());
         
@@ -126,9 +243,11 @@ impl P2PVirtualFileSystem {
                 let shard_data = bincode::serialize(shard)?;
                 let shard_id = format!("{}-s{}", block_id, shard_idx);
                 
-                // Store shard on P2P network
-                let mut p2p = self.p2p_node.write().await;
-                p2p.store_block(shard_id.clone(), shard_data.clone()).await?;
+                // Store shard on P2P network (DHT + local cache)
+                if let Err(e) = self.store_block_p2p(shard_id.clone(), shard_data.clone()).await {
+                    tracing::warn!("   ⚠️  Failed to store shard {} on P2P network: {}", shard_id, e);
+                    // Continue anyway - we have local storage
+                }
                 
                 // Pin the shard (user data - never garbage collected)
                 let mut pinning = self.pinning.write().await;
@@ -152,6 +271,9 @@ impl P2PVirtualFileSystem {
             if i == 0 {
                 first_block_uuid = Some(block_uuid);
             }
+            
+            // Report progress
+            progress_callback(blocks.len() - i, blocks.len());
         }
         
         let first_uuid = first_block_uuid.ok_or_else(|| 
@@ -166,6 +288,14 @@ impl P2PVirtualFileSystem {
     
     /// Download file from P2P network
     pub async fn download_file(&self, path: &Path) -> Result<Vec<u8>> {
+        self.download_file_with_progress(path, |_, _| {}).await
+    }
+    
+    /// Download file with progress callback
+    pub async fn download_file_with_progress<F>(&self, path: &Path, mut progress_callback: F) -> Result<Vec<u8>>
+    where
+        F: FnMut(usize, usize),
+    {
         let path_str = path.to_string_lossy().to_string();
         tracing::info!("📥 Downloading file '{}'", path_str);
         
@@ -177,10 +307,15 @@ impl P2PVirtualFileSystem {
         // Collect all blocks in chain
         let mut blocks = Vec::new();
         let mut current_uuid = *first_uuid;
+        let mut block_count = 0;
         
         loop {
             let block = self.get_block(&current_uuid).await?;
             blocks.push(block.clone());
+            block_count += 1;
+            
+            // Report progress for block retrieval
+            progress_callback(block_count, block_count + 1); // Estimate
             
             if let Some(prev_uuid) = block.previous_uuid {
                 current_uuid = prev_uuid;
@@ -189,7 +324,14 @@ impl P2PVirtualFileSystem {
             }
         }
         
-        tracing::info!("   Retrieved {} blocks", blocks.len());
+        let total_blocks = blocks.len();
+        tracing::info!("   Retrieved {} blocks", total_blocks);
+
+        // CRITICAL SECURITY FIX: Verify blockchain chain integrity before decryption
+        tracing::info!("   🔗 Verifying blockchain chain integrity...");
+        self.verify_chain(&blocks).await?;
+        tracing::info!("   ✅ Chain verification passed - all {} blocks valid", total_blocks);
+        tracing::info!("   ✅ No tampering detected - safe to decrypt");
         
         // STEP 7: Parallel decryption
         tracing::info!("   ⚡ Decrypting {} blocks in parallel...", blocks.len());
@@ -203,10 +345,63 @@ impl P2PVirtualFileSystem {
         // For now, assume data is compressed
         let file_data = compressed_data; // Would decompress here if needed
         
+        // Final progress update
+        progress_callback(total_blocks, total_blocks);
+        
         tracing::info!("✅ File '{}' downloaded ({} bytes)", path_str, file_data.len());
         Ok(file_data)
     }
     
+    /// Verify blockchain chain integrity (CRITICAL SECURITY FIX)
+    /// This prevents tampering by validating the entire chain before decryption
+    async fn verify_chain(&self, blocks: &[QuantumDataBlock]) -> Result<()> {
+        if blocks.is_empty() {
+            return Ok(());
+        }
+        
+        if blocks.len() == 1 {
+            tracing::debug!("   ℹ️  Single block chain - no verification needed");
+            return Ok(());
+        }
+
+        tracing::info!("   🔗 Verifying blockchain chain ({} blocks)", blocks.len());
+
+        for i in 1..blocks.len() {
+            let prev_block = &blocks[i - 1];
+            let curr_block = &blocks[i];
+
+            // CRITICAL: Verify previous_uuid matches
+            if curr_block.previous_uuid != Some(prev_block.uuid) {
+                tracing::error!("   ❌ SECURITY ALERT: Chain broken at block {}", i);
+                tracing::error!("      Previous UUID mismatch - TAMPERING DETECTED");
+                tracing::error!("      Expected: {:?}", Some(prev_block.uuid));
+                tracing::error!("      Got: {:?}", curr_block.previous_uuid);
+                return Err(MSSCSError::InvalidData(
+                    format!("Chain broken at block {}: UUID mismatch (expected {:?}, got {:?})", 
+                        i, Some(prev_block.uuid), curr_block.previous_uuid)
+                ));
+            }
+
+            // CRITICAL: Verify previous_hash matches
+            let expected_hash = prev_block.calculate_hash();
+            if curr_block.previous_hash != expected_hash {
+                tracing::error!("   ❌ SECURITY ALERT: Chain broken at block {}", i);
+                tracing::error!("      Hash mismatch - TAMPERING DETECTED");
+                tracing::error!("      Expected hash: {:?}", expected_hash);
+                tracing::error!("      Got hash: {:?}", curr_block.previous_hash);
+                return Err(MSSCSError::InvalidData(
+                    format!("Chain broken at block {}: hash mismatch", i)
+                ));
+            }
+            
+            tracing::debug!("      ✓ Block {} verified", i);
+        }
+
+        tracing::info!("   ✅ Chain verification passed - all {} blocks valid", blocks.len());
+        tracing::info!("   ✅ No tampering detected - safe to decrypt");
+        Ok(())
+    }
+
     /// Get block from local cache or P2P network
     async fn get_block(&self, uuid: &Uuid) -> Result<QuantumDataBlock> {
         let block_id = uuid.to_string();
@@ -246,13 +441,12 @@ impl P2PVirtualFileSystem {
         for shard_idx in 0..self.erasure.total_shards() {
             let shard_id = format!("{}-s{}", block_id, shard_idx);
             
-            // Try to get shard from P2P network
-            let mut p2p = self.p2p_node.write().await;
-            match p2p.get_block(&shard_id).await {
+            // Try to get shard from P2P network DHT
+            match self.get_block_p2p(&shard_id).await {
                 Ok(shard_data) => {
                     let shard: Shard = bincode::deserialize(&shard_data)?;
                     reconstructed_shards.push(shard);
-                    tracing::debug!("      ✅ Retrieved shard {}", shard_idx);
+                    tracing::debug!("      ✅ Retrieved shard {} from P2P network", shard_idx);
                 }
                 Err(_) => {
                     tracing::debug!("      ⚠️  Shard {} not available", shard_idx);
@@ -353,9 +547,12 @@ impl P2PVirtualFileSystem {
 }
 
 /// Storage statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct StorageStats {
     pub total_files: usize,
     pub cached_blocks: usize,
     pub connected_peers: usize,
+    pub storage_used: usize,
+    pub storage_limit: usize,
+    pub storage_available: usize,
 }

@@ -8,9 +8,6 @@ dependencies:
   '@tauri-apps/api':
     specifier: ^2.0.0
     version: 2.9.0
-  '@tauri-apps/plugin-dialog':
-    specifier: ^2.4.2
-    version: 2.4.2
   pinia:
     specifier: ^2.1.7
     version: 2.3.1(typescript@5.9.3)(vue@3.5.24)
@@ -568,12 +565,6 @@ packages:
       '@tauri-apps/cli-win32-ia32-msvc': 2.9.4
       '@tauri-apps/cli-win32-x64-msvc': 2.9.4
     dev: true
-
-  /@tauri-apps/plugin-dialog@2.4.2:
-    resolution: {integrity: sha512-lNIn5CZuw8WZOn8zHzmFmDSzg5zfohWoa3mdULP0YFh/VogVdMVWZPcWSHlydsiJhRQYaTNSYKN7RmZKE2lCYQ==}
-    dependencies:
-      '@tauri-apps/api': 2.9.0
-    dev: false
 
   /@types/estree@1.0.8:
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}

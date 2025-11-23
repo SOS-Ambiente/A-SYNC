@@ -21,6 +21,7 @@ dirs = "5.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 libp2p-identity = "0.2"
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

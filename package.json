@@ -4,25 +4,24 @@
   "description": "MSSCS v4.0 - Multi-State Chain-based Secure Storage",
   "type": "module",
   "scripts": {
-    "dev": "pnpm run --filter msscs-client dev",
-    "build": "pnpm run --filter msscs-client build",
-    "build:linux": "pnpm run --filter msscs-client build:linux",
-    "build:windows": "pnpm run --filter msscs-client build:windows",
-    "build:all": "pnpm run --filter msscs-client build:all",
-    "build:linux:appimage": "pnpm run --filter msscs-client build:linux:appimage",
-    "build:windows:nsis": "pnpm run --filter msscs-client build:windows:nsis",
-    "build:mobile": "cd msscs_mobile && pnpm build",
-    "build:mobile:android": "cd msscs_mobile && pnpm build:android",
-    "build:mobile:ios": "cd msscs_mobile && pnpm build:ios",
-    "test": "pnpm run --filter msscs-client test",
-    "clean": "pnpm run --filter msscs-client clean && rm -rf target/",
-    "install:all": "pnpm install && cd msscs_client && pnpm install && cd ../msscs_mobile && pnpm install"
+    "dev": "pnpm --filter msscs-client dev",
+    "web:dev": "pnpm --filter msscs-web dev",
+    "web:build": "pnpm --filter msscs-web build",
+    "mobile:dev": "pnpm --filter msscs-mobile android:dev",
+    "build:windows": "pnpm --filter msscs-client build:windows",
+    "build:linux": "pnpm --filter msscs-client build:linux",
+    "build:android": "pnpm --filter msscs-mobile android:build:apk",
+    "build:web": "pnpm --filter msscs-web build",
+    "build:server": "cargo build --release --package msscs_v4",
+    "build:all": "pnpm build:windows && pnpm build:linux && pnpm build:android && pnpm build:web && pnpm build:server",
+    "server:dev": "cargo run --package msscs_v4",
+    "server:build": "cargo build --release --package msscs_v4",
+    "clean": "pnpm --filter msscs-client clean && cargo clean",
+    "install:all": "pnpm install -r",
+    "test": "cargo test --workspace"
   },
   "packageManager": "pnpm@8.0.0",
-  "workspaces": [
-    "msscs_client",
-    "msscs_mobile"
-  ],
+
   "keywords": [
     "p2p",
     "storage",

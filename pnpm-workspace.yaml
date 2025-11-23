@@ -1,0 +1,4 @@
+packages:
+  - 'msscs_client'
+  - 'msscs_web'
+  - 'msscs_v4'

@@ -194,25 +194,7 @@ impl VirtualFileSystem {
         Ok(data)
     }
 
-    /// Get chunk data from local storage
-    async fn get_chunk_from_storage(&mut self, chunk_id: &str) -> Result<Vec<u8>> {
-        // Check local memory first
-        if let Some(block) = self.local_blocks.get(chunk_id) {
-            return Ok(block.get_encrypted_payload().to_vec());
-        }
 
-        // Try to load from disk
-        let uuid = Uuid::parse_str(chunk_id)
-            .map_err(|_| MSSCSError::InvalidData(format!("Invalid chunk ID: {}", chunk_id)))?;
-
-        if let Ok(block) = self.persistence.load_block(&uuid) {
-            self.local_blocks.insert(chunk_id.to_string(), block.clone());
-            return Ok(block.get_encrypted_payload().to_vec());
-        }
-
-        Err(MSSCSError::NotFound(format!("Chunk {} not found in local storage", chunk_id)))
-    }
-    
     /// Read file from distributed storage
     pub async fn read_file(&mut self, path: &Path) -> Result<Vec<u8>> {
         self.read_file_with_progress(path, |_, _| {}).await

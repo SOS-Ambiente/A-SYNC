@@ -42,6 +42,9 @@ pub enum MSSCSError {
 
     #[error("UUID error: {0}")]
     Uuid(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
 }
 
 impl From<serde_json::Error> for MSSCSError {

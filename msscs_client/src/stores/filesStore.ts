@@ -1,14 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-// Compatibility layer for Tauri API versions
+import { invoke } from '@tauri-apps/api/tauri'
+import { listen } from '@tauri-apps/api/event'
+
+// Compatibility layer for Tauri API
 const tauri = {
-  invoke: (command: string, args?: any) => {
-    // Desktop client using v1.5 API
-    return window.__TAURI__.invoke(command, args);
-  },
-  listen: (event: string, callback: (event: any) => void) => {
-    return window.__TAURI__.event.listen(event, callback);
-  }
+  invoke,
+  listen
 };
 
 export interface FileItem {
@@ -19,6 +17,12 @@ export interface FileItem {
   synced: boolean
   extension?: string
   mimeType?: string
+  isFolder?: boolean
+  parentPath?: string
+  modifiedAt?: number
+  createdAt?: number
+  sharedWith?: string[]
+  permissions?: 'read' | 'write' | 'admin'
 }
 
 export interface ProgressData {
@@ -58,111 +62,120 @@ export interface DownloadProgress {
   error?: string;
 }
 
-// Generate unique file ID
-function generateFileId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).substr(2);
-}
+
 
 export const useFilesStore = defineStore('files', () => {
   const files = ref<FileItem[]>([])
   const loading = ref(false)
   const uploadProgress = ref<Map<string, ProgressData>>(new Map())
   const downloadProgress = ref<Map<string, ProgressData>>(new Map())
+  const currentPath = ref<string>('/')
+  const viewMode = ref<'grid' | 'list'>('grid')
+  const sortBy = ref<'name' | 'size' | 'date'>('name')
+  const sortOrder = ref<'asc' | 'desc'>('asc')
+  const selectedFiles = ref<Set<string>>(new Set())
+  const searchQuery = ref<string>('')
 
-  // Listen for upload progress events
-  tauri.listen<ProgressData>('upload-progress', (event) => {
-    const data = event.payload
-    uploadProgress.value.set(data.file, data)
+  // Setup event listeners on store creation
+  const setupEventListeners = () => {
+    // Listen for upload progress events
+    tauri.listen<ProgressData>('upload-progress', (event) => {
+      const data = event.payload
+      console.log('📤 Upload progress:', data)
+      uploadProgress.value.set(data.file, data)
 
-    if (data.complete) {
-      setTimeout(() => {
-        uploadProgress.value.delete(data.file)
-      }, 2000)
-    }
-  })
+      if (data.complete) {
+        console.log('✅ Upload complete:', data.file)
+        setTimeout(() => {
+          uploadProgress.value.delete(data.file)
+          // Auto-refresh file list after upload
+          loadFiles()
+        }, 2000)
+      }
+    })
 
-  // Listen for download progress events
-  tauri.listen<ProgressData>('download-progress', (event) => {
-    const data = event.payload
-    downloadProgress.value.set(data.file, data)
+    // Listen for download progress events
+    tauri.listen<ProgressData>('download-progress', (event) => {
+      const data = event.payload
+      console.log('📥 Download progress:', data)
+      downloadProgress.value.set(data.file, data)
 
-    if (data.complete) {
-      setTimeout(() => {
-        downloadProgress.value.delete(data.file)
-      }, 2000)
-    }
-  })
+      if (data.complete) {
+        console.log('✅ Download complete:', data.file)
+        setTimeout(() => {
+          downloadProgress.value.delete(data.file)
+        }, 2000)
+      }
+    })
+    
+    console.log('✅ Event listeners setup complete')
+  }
+  
+  // Initialize listeners
+  setupEventListeners()
 
   const loadFiles = async () => {
     loading.value = true
     try {
+      console.log('📋 Loading files...')
       const fileList = await tauri.invoke<FileItem[]>('list_files')
       files.value = fileList
+      console.log(`✅ Loaded ${fileList.length} files`)
     } catch (error) {
-      console.error('Failed to load files:', error)
-      files.value = []
+      console.error('❌ Failed to load files:', error)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      
+      // Show user-friendly error
+      if (errorMsg.includes('Node not started')) {
+        console.warn('⚠️  Node not ready yet, will retry...')
+        // Retry after a delay
+        setTimeout(loadFiles, 2000)
+      } else {
+        files.value = []
+      }
     } finally {
       loading.value = false
     }
   }
 
-  const uploadFile = async (filePath: string, onProgress?: (progress: UploadProgress) => void) => {
+  const uploadFile = async (filePath: string) => {
     try {
-      const fileId = generateFileId();
-
-      // Setup progress listener
-      if (onProgress) {
-        const unlisten = await tauri.listen('upload-progress', (event) => {
-          if (event.payload.fileId === fileId) {
-            onProgress(event.payload as UploadProgress);
-          }
-        });
-      }
-
-      // Start upload with enhanced parameters
+      console.log('📤 Starting upload:', filePath)
+      
+      // Start upload - backend will emit progress events
       const result = await tauri.invoke('upload_file', {
-        fileId,
-        fileName: filePath.split('/').pop() || filePath,
-        fileSize: 0, // Will be read by backend
-        filePath: filePath,
-        chunkSize: 1024 * 1024, // 1MB chunks (matching backend)
-        compressionLevel: 'high', // Enable Huffman compression
-        replicationFactor: 3, // Replicate to 3 peers
-        encrypt: true // Enable encryption
+        path: filePath
       });
 
+      console.log('✅ Upload complete:', result)
+      
+      // Reload files to show the new file
       await loadFiles();
-      return { fileId, ...result };
+      
+      return result;
     } catch (error) {
-      console.error('Upload failed:', error);
-      throw new Error(`Upload failed: ${error}`);
+      console.error('❌ Upload failed:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      throw new Error(`Upload failed: ${errorMsg}`);
     }
   }
 
-  const downloadFile = async (fileId: string, savePath: string, onProgress?: (progress: DownloadProgress) => void) => {
+  const downloadFile = async (path: string, savePath: string) => {
     try {
-      // Setup progress listener
-      if (onProgress) {
-        const unlisten = await tauri.listen('download-progress', (event) => {
-          if (event.payload.fileId === fileId) {
-            onProgress(event.payload as DownloadProgress);
-          }
-        });
-      }
-
-      // Start download
+      console.log('📥 Starting download:', path, '→', savePath)
+      
+      // Start download - backend will emit progress events
       const result = await tauri.invoke('download_file', {
-        fileId,
-        outputPath: savePath,
-        decompress: true, // Decompress using Huffman
-        verifyIntegrity: true, // Check checksums
-        preferLocal: true // Use local cache if available
+        path,
+        outputPath: savePath
       });
 
-      return { fileId, ...result };
+      console.log('✅ Download complete:', result)
+      return result;
     } catch (error) {
-      console.error('Download failed:', error);
-      throw new Error(`Download failed: ${error}`);
+      console.error('❌ Download failed:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      throw new Error(`Download failed: ${errorMsg}`);
     }
   }
 
@@ -187,12 +200,89 @@ export const useFilesStore = defineStore('files', () => {
 
   const deleteFile = async (path: string) => {
     try {
+      console.log('🗑️  Deleting file:', path)
       await tauri.invoke('delete_file', { path })
+      console.log('✅ File deleted:', path)
+      
+      // Reload files to update the list
       await loadFiles()
     } catch (error) {
-      console.error('Failed to delete file:', error)
+      console.error('❌ Failed to delete file:', error)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      throw new Error(`Delete failed: ${errorMsg}`)
+    }
+  }
+
+  const createFolder = async (folderPath: string) => {
+    try {
+      console.log('📁 Creating folder:', folderPath)
+      await tauri.invoke('create_folder', { path: folderPath })
+      console.log('✅ Folder created:', folderPath)
+      await loadFiles()
+    } catch (error) {
+      console.error('❌ Failed to create folder:', error)
       throw error
     }
+  }
+
+  const moveFile = async (sourcePath: string, destPath: string) => {
+    try {
+      console.log('🔄 Moving file:', sourcePath, '→', destPath)
+      await tauri.invoke('move_file', { sourcePath, destPath })
+      console.log('✅ File moved')
+      await loadFiles()
+    } catch (error) {
+      console.error('❌ Failed to move file:', error)
+      throw error
+    }
+  }
+
+  const renameFile = async (oldPath: string, newPath: string) => {
+    try {
+      console.log('✏️  Renaming file:', oldPath, '→', newPath)
+      await tauri.invoke('rename_file', { oldPath, newPath })
+      console.log('✅ File renamed')
+      await loadFiles()
+    } catch (error) {
+      console.error('❌ Failed to rename file:', error)
+      throw error
+    }
+  }
+
+  const shareFile = async (filePath: string, userIds: string[], permission: string) => {
+    try {
+      console.log('🤝 Sharing file:', filePath)
+      await tauri.invoke('share_file', { path: filePath, userIds, permission })
+      console.log('✅ File shared')
+      await loadFiles()
+    } catch (error) {
+      console.error('❌ Failed to share file:', error)
+      throw error
+    }
+  }
+
+  const toggleFileSelection = (path: string) => {
+    if (selectedFiles.value.has(path)) {
+      selectedFiles.value.delete(path)
+    } else {
+      selectedFiles.value.add(path)
+    }
+  }
+
+  const clearSelection = () => {
+    selectedFiles.value.clear()
+  }
+
+  const selectAll = () => {
+    files.value.forEach(file => selectedFiles.value.add(file.path))
+  }
+
+  const deleteSelected = async () => {
+    const paths = Array.from(selectedFiles.value)
+    for (const path of paths) {
+      await deleteFile(path)
+    }
+    clearSelection()
   }
 
   return {
@@ -200,11 +290,25 @@ export const useFilesStore = defineStore('files', () => {
     loading,
     uploadProgress,
     downloadProgress,
+    currentPath,
+    viewMode,
+    sortBy,
+    sortOrder,
+    selectedFiles,
+    searchQuery,
     loadFiles,
     uploadFile,
     downloadFile,
     deleteFile,
     previewFile,
     openWithNativeApp,
+    createFolder,
+    moveFile,
+    renameFile,
+    shareFile,
+    toggleFileSelection,
+    clearSelection,
+    selectAll,
+    deleteSelected,
   }
 })

@@ -1,5 +1,8 @@
 <template>
   <div class="app">
+    <!-- Initialization Overlay -->
+    <InitializationOverlay />
+    
     <!-- Titlebar -->
     <div class="titlebar" data-tauri-drag-region>
       <div class="titlebar-left">
@@ -90,7 +93,9 @@
       <!-- Content Area -->
       <main class="content">
         <transition name="fade" mode="out-in">
-          <FilesView v-if="activeView === 'files'" />
+          <DashboardView v-if="activeView === 'dashboard'" @navigate="(view) => activeView = view" />
+          <FilesView v-else-if="activeView === 'files'" />
+          <WorkspacePanel v-else-if="activeView === 'workspaces'" />
           <SyncView v-else-if="activeView === 'sync'" />
           <PeersView v-else-if="activeView === 'peers'" />
           <SettingsView v-else-if="activeView === 'settings'" />
@@ -101,37 +106,88 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { appWindow } from '@tauri-apps/api/window'
 import { useNodeStore } from './stores/nodeStore'
+import DashboardView from './components/DashboardView.vue'
 import FilesView from './components/FilesView.vue'
 import SyncView from './components/SyncView.vue'
 import PeersView from './components/PeersView.vue'
 import SettingsView from './components/SettingsView.vue'
+import WorkspacePanel from './components/WorkspacePanel.vue'
+import InitializationOverlay from './components/InitializationOverlay.vue'
 
 const nodeStore = useNodeStore()
-const activeView = ref('files')
+const activeView = ref('dashboard')
+
+// Keyboard shortcuts
+const handleKeyboard = (e: KeyboardEvent) => {
+  if (e.ctrlKey || e.metaKey) {
+    switch(e.key) {
+      case 'd':
+        e.preventDefault()
+        activeView.value = 'dashboard'
+        break
+      case '1':
+        e.preventDefault()
+        activeView.value = 'files'
+        break
+      case '2':
+        e.preventDefault()
+        activeView.value = 'workspaces'
+        break
+      case '3':
+        e.preventDefault()
+        activeView.value = 'sync'
+        break
+      case '4':
+        e.preventDefault()
+        activeView.value = 'peers'
+        break
+      case ',':
+        e.preventDefault()
+        activeView.value = 'settings'
+        break
+    }
+  }
+}
 
 const navItems = [
   { 
+    id: 'dashboard', 
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>', 
+    label: 'Dashboard',
+    shortcut: 'Ctrl+D'
+  },
+  { 
     id: 'files', 
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>', 
-    label: 'Files' 
+    label: 'Files',
+    shortcut: 'Ctrl+1'
+  },
+  { 
+    id: 'workspaces', 
+    icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>', 
+    label: 'Workspaces',
+    shortcut: 'Ctrl+2'
   },
   { 
     id: 'sync', 
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>', 
-    label: 'Sync' 
+    label: 'Sync',
+    shortcut: 'Ctrl+3'
   },
   { 
     id: 'peers', 
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20M2 12h20"/></svg>', 
-    label: 'Peers' 
+    label: 'Peers',
+    shortcut: 'Ctrl+4'
   },
   { 
     id: 'settings', 
     icon: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6M5.64 5.64l4.24 4.24m4.24 4.24l4.24 4.24M1 12h6m6 0h6M5.64 18.36l4.24-4.24m4.24-4.24l4.24-4.24"/></svg>', 
-    label: 'Settings' 
+    label: 'Settings',
+    shortcut: 'Ctrl+,'
   },
 ]
 
@@ -155,13 +211,15 @@ const closeWindow = () => appWindow.close()
 
 // Initialize node on mount
 onMounted(async () => {
-  console.log('App mounted, initializing node...')
-  try {
-    await nodeStore.initialize()
-    console.log('Node initialization complete, status:', nodeStore.status)
-  } catch (error) {
-    console.error('Failed to initialize node:', error)
-  }
+  console.log('App mounted')
+  // Node initialization is now handled by InitializationOverlay
+  
+  // Add keyboard shortcuts
+  window.addEventListener('keydown', handleKeyboard)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeyboard)
 })
 </script>
 

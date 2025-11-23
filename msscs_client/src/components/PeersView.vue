@@ -15,34 +15,12 @@
     </div>
 
     <div class="peers-grid">
-      <div v-for="peer in peers" :key="peer.id" class="peer-card glass">
-        <div class="peer-header">
-          <div class="peer-status" :class="peer.status">
-            <div class="status-pulse"></div>
-          </div>
-          <div class="peer-address">{{ peer.address }}</div>
-          <button class="remove-btn" @click="removePeer(peer)" title="Remove">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          </button>
-        </div>
-        <div class="peer-stats">
-          <div class="peer-stat">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-            </svg>
-            <span>{{ peer.blocks }} blocks</span>
-          </div>
-          <div class="peer-stat">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
-            </svg>
-            <span>{{ peer.latency }}ms</span>
-          </div>
-        </div>
-      </div>
+      <PeerCard
+        v-for="peer in peers"
+        :key="peer.id"
+        :peer="peer"
+        @remove="removePeer"
+      />
     </div>
 
     <!-- Add Peer Modal -->
@@ -78,14 +56,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
-
-interface Peer {
-  id: string
-  address: string
-  status: 'online' | 'offline'
-  blocks: number
-  latency: number
-}
+import PeerCard from './PeerCard.vue'
+import type { Peer } from './PeerCard.vue'
 
 const peers = ref<Peer[]>([])
 const loading = ref(false)

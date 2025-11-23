@@ -289,6 +289,33 @@ impl PinningManager {
             max_cache_size: self.max_cache_size,
         }
     }
+    
+    /// Set storage limit (in bytes)
+    pub fn set_limit(&mut self, limit_bytes: usize) {
+        self.max_cache_size = limit_bytes;
+        // Trigger eviction if needed
+        let _ = self.evict_cache_if_needed();
+    }
+    
+    /// Get used storage space (in bytes)
+    pub fn get_used_space(&self) -> usize {
+        self.pins.values().map(|p| p.size).sum()
+    }
+    
+    /// Get storage limit (in bytes)
+    pub fn get_limit(&self) -> usize {
+        self.max_cache_size
+    }
+    
+    /// Get available storage space (in bytes)
+    pub fn get_available_space(&self) -> usize {
+        let used = self.get_used_space();
+        if used >= self.max_cache_size {
+            0
+        } else {
+            self.max_cache_size - used
+        }
+    }
 }
 
 /// Pinning statistics
