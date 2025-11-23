@@ -121,12 +121,14 @@ pub fn create_router(state: AppState) -> Router {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
-    
+
     Router::new()
         .route("/files", post(write_file_handler))
         .route("/files", get(list_files_handler))
         .route("/files/:path", get(read_file_handler))
         .route("/files/:path", delete(delete_file_handler))
+        .route("/files/:id/chunks", get(get_file_chunks_handler))
+        .route("/chunks/download", post(download_chunk_handler))
         .route("/blocks/:uuid", get(get_block_info_handler))
         .route("/health", get(health_check_handler))
         .route("/metrics", get(metrics_handler))
