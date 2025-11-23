@@ -312,6 +312,82 @@ fn check_auth(config: &Config, headers: &HeaderMap) -> Result<()> {
     Ok(())
 }
 
+/// Get file chunks handler
+async fn get_file_chunks_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(file_id): Path<String>,
+) -> Result<impl IntoResponse> {
+    // Check authentication
+    check_auth(&state.config, &headers)?;
+
+    // Parse file ID
+    let file_uuid = Uuid::parse_str(&file_id)
+        .map_err(|e| MSSCSError::InvalidData(format!("Invalid file ID: {}", e)))?;
+
+    // Load file metadata from persistence
+    let metadata = state.vfs.read().await.persistence.load_file_metadata(&file_id)?
+        .ok_or_else(|| MSSCSError::NotFound(format!("File {} not found", file_id)))?;
+
+    // Convert chunks to response format
+    let chunks: Vec<FileChunkInfo> = metadata.chunk_ids.iter().enumerate().map(|(index, chunk_id)| {
+        FileChunkInfo {
+            chunk_id: chunk_id.clone(),
+            chunk_index: index as u64,
+            size: 0, // Would be populated from actual block data
+            compressed_size: 0, // Would be populated from actual block data
+            checksum: "".to_string(), // Would be calculated from block data
+        }
+    }).collect();
+
+    // Update metrics
+    state.metrics.record_request(true);
+
+    Ok(Json(FileChunksResponse {
+        file_id,
+        chunks,
+        total_chunks: metadata.chunk_count,
+    }))
+}
+
+/// Download chunk handler
+async fn download_chunk_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DownloadChunkRequest>,
+) -> Result<impl IntoResponse> {
+    // Check authentication
+    check_auth(&state.config, &headers)?;
+
+    // Parse chunk UUID
+    let chunk_uuid = Uuid::parse_str(&req.chunk_id)
+        .map_err(|e| MSSCSError::InvalidData(format!("Invalid chunk ID: {}", e)))?;
+
+    // Get chunk from local storage
+    let blocks = state.node.local_blocks.read().await;
+    let block = blocks.get(&req.chunk_id)
+        .ok_or_else(|| MSSCSError::NotFound(format!("Chunk {} not found", req.chunk_id)))?;
+
+    // Get chunk data
+    let chunk_data = block.get_compressed_data();
+
+    // Calculate checksum
+    let checksum = crate::block::calculate_checksum(chunk_data);
+
+    // Encode to base64
+    use base64::{Engine as _, engine::general_purpose};
+    let encoded = general_purpose::STANDARD.encode(chunk_data);
+
+    // Update metrics
+    state.metrics.record_request(true);
+
+    Ok(Json(DownloadChunkResponse {
+        chunk_id: req.chunk_id,
+        data: encoded,
+        checksum,
+    }))
+}
+
 /// Convert MSSCSError to HTTP response
 impl IntoResponse for MSSCSError {
     fn into_response(self) -> Response {
@@ -321,7 +397,7 @@ impl IntoResponse for MSSCSError {
             MSSCSError::Config(msg) => (StatusCode::UNAUTHORIZED, msg),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
         };
-        
+
         (status, message).into_response()
     }
 }
