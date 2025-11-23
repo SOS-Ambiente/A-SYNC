@@ -570,25 +570,25 @@ async fn get_file_details(
 ) -> Result<FileDetails, String> {
     let state_guard = state.read().await;
     let app_state = state_guard.as_ref().ok_or("Node not started")?;
-    
+
     let vfs = app_state.vfs.read().await;
     let file_manifest = vfs.list_files();
-    
+
     if !file_manifest.contains(&path) {
         return Err("File not found".to_string());
     }
-    
+
     let peers = app_state.node.peers.read().await;
     let peers_count = peers.len();
-    
+
     let mime_type = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
-    
+
     // Get file size from blocks
     let block_count = vfs.block_count();
     let storage_bytes = vfs.storage_bytes();
-    
+
     Ok(FileDetails {
         path: path.clone(),
         uuid: "encrypted".to_string(),
@@ -599,6 +599,73 @@ async fn get_file_details(
         peers_count,
         mime_type,
     })
+}
+
+// P2P Bridge commands
+#[tauri::command]
+async fn start_p2p_bridge(
+    listen_port: u16,
+    state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
+) -> Result<(), String> {
+    let mut state_guard = state.write().await;
+    let app_state = state_guard.as_mut().ok_or("Node not started")?;
+
+    // Initialize P2P bridge
+    let (event_sender, mut event_receiver) = tokio::sync::mpsc::unbounded_channel();
+    let mut bridge = p2p_bridge::P2PBridge::new();
+    bridge.initialize(event_sender);
+
+    // Start P2P node
+    bridge.start_p2p_node(listen_port).await?;
+
+    // Store bridge
+    *app_state.p2p_bridge.write().await = Some(bridge);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn add_discovered_peer(
+    address: String,
+    port: u16,
+    state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
+) -> Result<(), String> {
+    let state_guard = state.read().await;
+    let app_state = state_guard.as_ref().ok_or("Node not started")?;
+
+    let mut bridge_guard = app_state.p2p_bridge.write().await;
+    let bridge = bridge_guard.as_mut()
+        .ok_or("P2P bridge not started")?;
+
+    bridge.add_discovered_peer(address, port).await
+}
+
+#[tauri::command]
+async fn get_p2p_network_status(
+    state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
+) -> Result<p2p_bridge::NetworkStatus, String> {
+    let state_guard = state.read().await;
+    let app_state = state_guard.as_ref().ok_or("Node not started")?;
+
+    let bridge_guard = app_state.p2p_bridge.read().await;
+    let bridge = bridge_guard.as_ref()
+        .ok_or("P2P bridge not started")?;
+
+    Ok(bridge.get_network_status().await)
+}
+
+#[tauri::command]
+async fn get_p2p_network_stats(
+    state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>,
+) -> Result<p2p_bridge::NetworkStats, String> {
+    let state_guard = state.read().await;
+    let app_state = state_guard.as_ref().ok_or("Node not started")?;
+
+    let bridge_guard = app_state.p2p_bridge.read().await;
+    let bridge = bridge_guard.as_ref()
+        .ok_or("P2P bridge not started")?;
+
+    Ok(bridge.get_network_stats().await)
 }
 
 fn get_app_data_dir() -> PathBuf {
