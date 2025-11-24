@@ -249,14 +249,15 @@ export class P2PNetwork {
             }
         });
 
-        // Timeout after 10 seconds
+        // Timeout after 5 seconds (faster initialization)
         setTimeout(() => {
             if (!resolved) {
                 resolved = true;
                 console.warn('⚠️  P2P connection timeout, running in offline mode');
+                console.log('💡 You can still use the app - connections will establish in background');
                 resolve();
             }
-        }, 10000);
+        }, 5000);
     }
 
     // Broadcast presence to local network via localStorage
@@ -287,7 +288,21 @@ export class P2PNetwork {
         console.log('🔍 Starting local peer discovery...');
         console.log('   My Peer ID:', this.peerId);
         
-        // Check localStorage for other peers
+        // Initial discovery
+        this.scanForLocalPeers();
+        
+        // Re-discover every 10 seconds
+        setInterval(() => {
+            this.cleanupOldPeers();
+            this.scanForLocalPeers();
+        }, 10000);
+    }
+    
+    // Scan localStorage for peers (extracted for reuse)
+    scanForLocalPeers() {
+        let foundPeers = 0;
+        let skippedSelf = false;
+        
         for (let i = 0; i < localStorage.length; i++) {
             const key = localStorage.key(i);
             if (key && key.startsWith('msscs_peer_')) {
@@ -297,47 +312,26 @@ export class P2PNetwork {
                     
                     // CRITICAL FIX: Skip self to avoid self-connection attempts
                     if (peerId === this.peerId) {
-                        console.log('   ✓ Found self in localStorage (node recognized)');
+                        skippedSelf = true;
                         continue;
                     }
                     
                     // Check if peer is recent (within last 30 seconds)
-                    if (Date.now() - data.timestamp < 30000) {
+                    if (Date.now() - data.timestamp < 30000 && !this.connections.has(peerId)) {
                         console.log('🔍 Discovered local peer:', peerId);
-                        // Auto-connect to local peer
-                        setTimeout(() => this.connectToPeer(peerId), 1000);
+                        foundPeers++;
+                        // Auto-connect with small delay
+                        setTimeout(() => this.connectToPeer(peerId), 1000 + Math.random() * 1000);
                     }
                 } catch (e) {
-                    console.error('Error parsing peer data:', e);
+                    // Ignore parsing errors
                 }
             }
         }
         
-        // Re-discover every 10 seconds
-        setInterval(() => {
-            this.cleanupOldPeers();
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (key && key.startsWith('msscs_peer_')) {
-                    try {
-                        const data = JSON.parse(localStorage.getItem(key));
-                        const peerId = key.replace('msscs_peer_', '');
-                        
-                        // CRITICAL FIX: Skip self
-                        if (peerId === this.peerId) {
-                            continue;
-                        }
-                        
-                        if (Date.now() - data.timestamp < 30000 && !this.connections.has(peerId)) {
-                            console.log('🔍 Discovered local peer:', peerId);
-                            this.connectToPeer(peerId);
-                        }
-                    } catch (e) {
-                        // Ignore errors
-                    }
-                }
-            }
-        }, 10000);
+        if (foundPeers === 0 && skippedSelf) {
+            console.log('✓ No other local peers found (self excluded)');
+        }
     }
 
     cleanupOldPeers() {
@@ -417,14 +411,11 @@ export class P2PNetwork {
                     
                     switch (message.type) {
                         case 'peer-list':
-                            console.log('📋 Received peer list:', message.peers);
+                            const otherPeers = message.peers.filter(p => p.peerId !== this.peerId);
+                            console.log('📋 Received peer list:', otherPeers.length, 'other peers');
+                            
                             // Auto-connect to discovered peers
-                            message.peers.forEach(peer => {
-                                // CRITICAL FIX: Skip self in discovery server peer list
-                                if (peer.peerId === this.peerId) {
-                                    console.log('   ✓ Found self in peer list (skipping)');
-                                    return;
-                                }
+                            otherPeers.forEach(peer => {
                                 if (!this.connections.has(peer.peerId)) {
                                     console.log(`🔗 Auto-connecting to ${peer.type} peer:`, peer.peerId);
                                     setTimeout(() => this.connectToPeer(peer.peerId), 500);

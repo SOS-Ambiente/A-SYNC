@@ -247,7 +247,7 @@ pub struct P2PNode {
     swarm: Swarm<P2PBehaviour>,
     event_sender: mpsc::UnboundedSender<P2PEvent>,
     local_blocks: Arc<RwLock<HashMap<Uuid, DataBlock>>>,
-    pending_requests: Arc<RwLock<HashMap<QueryId, Uuid>>>,
+    _pending_requests: Arc<RwLock<HashMap<QueryId, Uuid>>>,
     pending_get_queries: Arc<RwLock<HashMap<QueryId, tokio::sync::oneshot::Sender<std::result::Result<Vec<u8>, String>>>>>,
     pending_put_queries: Arc<RwLock<HashMap<QueryId, tokio::sync::oneshot::Sender<std::result::Result<(), String>>>>>,
     command_receiver: Option<mpsc::UnboundedReceiver<P2PNodeCommand>>,
@@ -276,11 +276,8 @@ impl P2PNode {
             .with_relay_client(noise::Config::new, yamux::Config::default)
             .map_err(|e| MSSCSError::Network(format!("Failed to create relay client: {}", e)))?
             .with_behaviour(|_keypair, relay_client| {
-                // Create Kademlia DHT
+                // Create Kademlia DHT with optimized configuration
                 let store = MemoryStore::new(peer_id);
-                let mut kademlia = libp2p::kad::Behaviour::new(peer_id, store);
-                
-                // Configure Kademlia for public DHT with optimized settings
                 let mut kad_config = libp2p::kad::Config::default();
                 kad_config.set_query_timeout(std::time::Duration::from_secs(60));
                 kad_config.set_replication_factor(std::num::NonZeroUsize::new(config.replication_factor).unwrap());
@@ -382,7 +379,7 @@ impl P2PNode {
             swarm,
             event_sender,
             local_blocks: Arc::new(RwLock::new(HashMap::new())),
-            pending_requests: Arc::new(RwLock::new(HashMap::new())),
+            _pending_requests: Arc::new(RwLock::new(HashMap::new())),
             pending_get_queries: Arc::new(RwLock::new(HashMap::new())),
             pending_put_queries: Arc::new(RwLock::new(HashMap::new())),
             command_receiver: Some(cmd_rx),
@@ -404,18 +401,34 @@ impl P2PNode {
         let pending_get_queries = self.pending_get_queries.clone();
         let pending_put_queries = self.pending_put_queries.clone();
         
-        // Bootstrap DHT before starting event loop
-        if let Err(e) = Self::bootstrap_static(&mut self.swarm, &config).await {
-            tracing::warn!("⚠️  Bootstrap warning: {}", e);
-        }
-        
         // Take command receiver
         let mut cmd_rx = self.command_receiver.take().expect("Command receiver already taken");
+        
+        // CRITICAL FIX: Mark node as ready immediately - bootstrap happens in background
+        info!("✅ P2P node ready - bootstrap will continue in background");
+        let _ = event_sender.send(P2PEvent::BootstrapComplete);
+        let _ = event_tx.send(P2PEvent::BootstrapComplete);
+        
+        // CRITICAL FIX: Start bootstrap in background after 500ms
+        let bootstrap_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bootstrap_started_clone = bootstrap_started.clone();
 
         // Run swarm event loop in background
         tokio::spawn(async move {
+            // Start bootstrap after 500ms to let event loop initialize
+            let mut bootstrap_timer = tokio::time::interval(std::time::Duration::from_millis(500));
+            bootstrap_timer.tick().await; // First tick completes immediately
+            
             loop {
                 tokio::select! {
+                    // Bootstrap trigger (runs once after 500ms)
+                    _ = bootstrap_timer.tick(), if !bootstrap_started_clone.load(std::sync::atomic::Ordering::Relaxed) => {
+                        bootstrap_started_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        info!("🔄 Starting DHT bootstrap in background...");
+                        if let Err(e) = Self::bootstrap_static(&mut self.swarm, &config).await {
+                            warn!("⚠️  Bootstrap warning: {}", e);
+                        }
+                    }
                     // Handle swarm events
                     Some(event) = self.swarm.next() => {
                     match event {

@@ -49,37 +49,39 @@ export const useNodeStore = defineStore('node', () => {
         console.log('Node not running yet, starting...')
       }
       
-      // CRITICAL FIX: Start node with shorter timeout
+      // CRITICAL FIX: Start node with shorter timeout (5 seconds)
       console.log('⏳ Starting node...')
       
       try {
-        // Start node with 12 second timeout
+        // Start node with 5 second timeout (backend is non-blocking now)
         await Promise.race([
           invoke('start_node'),
           new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Node start timeout')), 12000)
+            setTimeout(() => reject(new Error('Node start timeout')), 5000)
           )
         ])
         
-        console.log('✅ Node started successfully')
+        console.log('✅ Node start command completed')
+        console.log('   P2P bootstrap continuing in background...')
         
-        // Transition to online immediately
-        status.value = 'online'
+        // Transition to syncing first, then online when metrics confirm
+        status.value = 'syncing'
         
-        // Start metrics polling
+        // Start metrics polling - will transition to online when ready
         startMetricsPolling()
         
       } catch (error) {
         console.error('❌ Node initialization failed:', error)
         const errorMsg = error instanceof Error ? error.message : String(error)
-        console.error('Detailed error:', errorMsg)
         
         // If timeout, still try to go online (node might be starting in background)
         if (errorMsg.includes('timeout')) {
-          console.warn('⚠️  Node start timeout - will retry via metrics polling')
+          console.warn('⚠️  Node start timeout - continuing with metrics polling')
+          console.log('   Node may still be initializing in background')
           status.value = 'syncing'
           startMetricsPolling() // This will transition to online when metrics work
         } else {
+          console.error('Detailed error:', errorMsg)
           status.value = 'offline'
           // Retry after 5 seconds
           setTimeout(() => {

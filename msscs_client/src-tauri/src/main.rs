@@ -216,24 +216,32 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
     tracing::info!("   • Data replication: {}x (fault tolerance)", p2p_config.replication_factor);
     tracing::info!("");
     
-    // CRITICAL FIX: Start P2P initialization in background with timeout
+    // CRITICAL FIX: Start P2P initialization in background (non-blocking)
     let p2p_command_tx = {
         tracing::info!("🔄 Starting P2P node initialization (background)...");
+        tracing::info!("   This will not block the UI - node will be ready shortly");
         
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            P2PNode::new(p2p_config.clone())
-        ).await {
-            Ok(Ok(p2p_node)) => {
-                let cmd_tx = p2p_node.get_command_sender();
-                
-                // Start node in background
-                tokio::spawn(async move {
+        // Start P2P in background without blocking
+        let (init_tx, mut init_rx) = mpsc::unbounded_channel();
+        
+        tokio::spawn(async move {
+            // Create P2P node (this is fast - just setup)
+            match P2PNode::new(p2p_config.clone()).await {
+                Ok(p2p_node) => {
+                    let cmd_tx = p2p_node.get_command_sender();
+                    
+                    // Send command sender back immediately
+                    let _ = init_tx.send(Some(cmd_tx.clone()));
+                    
+                    tracing::info!("✅ P2P node created, starting event loop...");
+                    
+                    // Start node event loop (this handles bootstrap in background)
                     match p2p_node.start(p2p_config.clone()).await {
                         Ok((mut event_rx, local_blocks)) => {
-                            tracing::info!("✅ P2P node started successfully");
+                            tracing::info!("✅ P2P event loop started");
+                            tracing::info!("   Bootstrap will complete in 10-30 seconds");
                             
-                            let mut peer_count = 0;
+                            let mut peer_count: usize = 0;
                             let mut bootstrap_complete = false;
                             
                             // Handle events
@@ -271,19 +279,24 @@ async fn start_node(state: State<'_, Arc<RwLock<Option<AppStateWrapper>>>>) -> R
                             tracing::error!("❌ P2P node start failed: {}", e);
                         }
                     }
-                });
-                
-                tracing::info!("✅ P2P node initialized (bootstrapping in background)");
+                }
+                Err(e) => {
+                    tracing::warn!("⚠️  P2P initialization failed: {}", e);
+                    tracing::warn!("   Running without libp2p P2P features");
+                    let _ = init_tx.send(None);
+                }
+            }
+        });
+        
+        // Wait briefly for P2P to initialize (but don't block too long)
+        match tokio::time::timeout(std::time::Duration::from_secs(2), init_rx.recv()).await {
+            Ok(Some(Some(cmd_tx))) => {
+                tracing::info!("✅ P2P node initialized (bootstrap continuing in background)");
                 Some(cmd_tx)
             }
-            Ok(Err(e)) => {
-                tracing::warn!("⚠️  P2P initialization failed: {}", e);
-                tracing::warn!("   Running without libp2p P2P features");
-                None
-            }
-            Err(_) => {
-                tracing::warn!("⚠️  P2P initialization timeout (3s)");
-                tracing::warn!("   Running without libp2p P2P features");
+            Ok(Some(None)) | Ok(None) | Err(_) => {
+                tracing::warn!("⚠️  P2P initialization taking longer than expected");
+                tracing::warn!("   Running without libp2p P2P features for now");
                 None
             }
         }
@@ -1041,7 +1054,7 @@ async fn check_firewall_access() -> Result<bool, String> {
 }
 
 #[tauri::command]
-async fn request_firewall_access(app_handle: tauri::AppHandle) -> Result<(), String> {
+async fn request_firewall_access(_app_handle: tauri::AppHandle) -> Result<(), String> {
     // Get the application executable path
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("Failed to get executable path: {}", e))?;
